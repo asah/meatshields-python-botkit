@@ -28,7 +28,7 @@
 # }
 #
 
-from flask import Flask, request
+from flask import Flask, request, json
 from flask_restful import Resource, Api
 
 app = Flask(__name__)
@@ -36,12 +36,13 @@ api = Api(app)
 
 class Heartbeat(Resource):
     def post(self):
-        return "OK"
+        return { "status": "success", "data": "OK" }
 
 class NullNextMove(Resource):
     def post(self):
-        json = request.get_json(force=True)
-        app.logger.debug(json)
+        botPlayerId = request.form['botPlayerId']
+        gameInfo = json.loads(request.form['gameInfo'])
+        app.logger.debug('tiles[0]: {}...'.format(gameInfo['tiles'][0]))
 
         # ... write your bot here ...
         
