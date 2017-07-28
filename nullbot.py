@@ -1,31 +1,5 @@
 #
-# ms1.py
-#
-# Skeleton API server for writing meatshields bots:
-# see https://meatshields.com/createBotGuide.php
-#
-# 1. install Flask-Restful on a fresh Ubuntu 16.04 install:
-# sudo apt-get update; sudo apt-get upgrade
-# sudo apt-get install python3-pip
-# pip3 install flask flask-restful
-# 
-# 2. run the bot server
-# ./run.sh
-#
-# 3. in a separate window, test the heartbeat interface:
-# ./test_heartbeat.sh
-# OK
-#
-# 4. in a separate window, test the nextmove interface:
-# ./test_nextmove.sh
-# {
-#     "status": "success",
-#     "data": {
-#         "purchase": false,
-#         "end_turn": true,
-#         "move": false
-#     }
-# }
+# nullbot.py
 #
 
 from flask import Flask, request, json
