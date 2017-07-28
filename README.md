@@ -1,6 +1,11 @@
 # Skeleton API server for writing meatshields bots
 see https://meatshields.com/createBotGuide.php for official documentation.
 
+# Trying the nullbot
+To play the nullbot, visit https://meatshields.com/playUserBot.php and select "null bot"
+
+To register the nullbot for yourself, visit https://meatshields.com/addUpdateBot.php and add this URL: http://meatshields-nullbot.jewsforbacon.com:5000
+
 # Installing Flask-Restful on Ubuntu 16.04
 pip3 install flask flask-restful
 
