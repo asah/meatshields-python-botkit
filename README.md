@@ -1,18 +1,32 @@
-# Skeleton API server for writing meatshields bots:
-
+# Skeleton API server for writing meatshields bots
 see https://meatshields.com/createBotGuide.php for official documentation.
 
-# installing Flask-Restful on Ubuntu 16.04
+# Installing Flask-Restful on Ubuntu 16.04
 pip3 install flask flask-restful
 
-# running the bot server
-./run.sh
+protip: remember to open port 5000 so the meatshields can talk to your bot.
 
-# testing the heartbeat interface
+protip: for production use, remember to add your bot to the OS startup scripts, e.g. https://linuxconfig.org/how-to-automatically-execute-shell-script-at-startup-boot-on-systemd-linux
+
+# Running the bot server
+```shell
+./run.sh
+ * Serving Flask app "nullbot"
+ * Forcing debug mode on
+ * Running on http://0.0.0.0:5000/ (Press CTRL+C to quit)
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 215-502-141
+```
+
+# Testing the heartbeat interface
+```shell
 ./test_heartbeat.sh
 OK
+```
 
-# test the nextmove interface
+# Testing the nextmove interface
+```shell
 ./test_nextmove.sh
 {
     "status": "success",
@@ -22,3 +36,4 @@ OK
         "move": false
     }
 }
+```
