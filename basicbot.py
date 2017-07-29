@@ -176,6 +176,10 @@ def choose_move(player_id, army_id, game_info, tiles, players):
             tile['seen'] = 0
             tile['path'] = None
         neighbors = unit_neighbors(tiles_by_idx, unit, army_id, unit, unit['unit_type']['move'], unit, [])
+        if len(neighbors) == 0:
+            app.logger.debug("skip {} at {},{},{}: no walkable neighbors\n".format(
+                unit['unit_name'], unit['terrain_name'],unit['x'], unit['y']))
+            continue
         dbg_nbr += "walkable neighbors of {} at {},{},{}:\n".format(unit['unit_name'], unit['terrain_name'],unit['x'], unit['y'])
         for nbr in sorted(neighbors, key=lambda r: r['y']*1000+r['x']):
             dbg_nbr += "- {} at {},{} via {}\n".format(nbr['terrain_name'], nbr['x'], nbr['y'], pathstr(nbr['path']))
@@ -185,8 +189,6 @@ def choose_move(player_id, army_id, game_info, tiles, players):
         return mkres(move= { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],
                              #,"unit_action": "capture"
                              'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'] } for p in dest['path']] })
-
-
 
     my_castles_by_dist = sorted(my_castles, key=dist_from_enemy_hq)
     dbg_cbd = "castles by distance:\n"
