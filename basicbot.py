@@ -31,36 +31,68 @@ UNIT_TYPES = {
     'Thunderstorm': { 'cost': 28000, 'move': 4, 'attackmin': 3, 'attackmax': 5 },
 }
 
-def unit_neighbors(tiles_by_idx, tile, army_id, unit_tile, remaining_moves):
+def xystr(tile):
+    return "{},{}".format(tile['x'],tile['y'])
+
+def xyloc(tile):
+    return tile['y']*1000 + tile['x']
+
+def pathstr(path):
+    return "{}" if path is None else ";".join([xystr(p) for p in path]) 
+
+def unit_neighbors(tiles_by_idx, tile, army_id, unit_tile, remaining_moves, prev, path):
     # counted down to the end
-    if remaining_move == 0: return []
+    # TODO: test fractional case e.g. Boulder walking through Forest
+    if remaining_moves < 1: return [tile]
     unit_type = unit_tile['unit_type']
     # enemy tile - no neighbors allowed
+    app.logger.debug('army_id@{}: {}'.format(xystr(tile), tile['unit_army_id']))
     if tile['unit_army_id'] not in [None, army_id]: return []
     terrain = tile['terrain_name']
+    app.logger.debug('terrain@{}: {}'.format(xystr(tile), terrain))
     if terrain not in WALKABLE_TERRAIN_TYPES: return []
-    new_remaining_moves = remaining_moves
+    #app.logger.debug("{}".format(dict_strip_none(tile)))
+    decr_moves = 0
     if unit_type == 'Knight':
-        if terrain in NORMAL_TERRAIN: new_remaining_moves -= 1
-        elif terrain in ['Forest','River','Mountains']: new_remaining_moves -= 2
-    elif unit_type in set(['Archer','Ninja']):
-        remaining_moves -= 2
+        if terrain in NORMAL_TERRAIN: decr_moves = 1
+        elif terrain in ['Forest','River','Mountains']: decr_moves = 2
+    elif unit_type in ['Archer','Ninja']:
+        decr_moves = 2
     elif unit_type == 'Mount':
-        if terrain in ['Road','Bridge']: new_remaining_moves -= 1
-        elif terrain in NORMAL_TERRAIN: new_remaining_moves -= 2
+        if terrain in ['Road','Bridge']: decr_moves = 1
+        elif terrain in NORMAL_TERRAIN: decr_moves = 2
     else: # normal walking units
-        if terrain in NORMAL_TERRAIN: new_remaining_moves -= 1
-        elif terrain == 'Forest': new_remaining_moves -= 2
-    if new_remaining_moves == remaining_moves: return []  # can't walk
+        if terrain in NORMAL_TERRAIN: decr_moves = 1
+        elif terrain == 'Forest': decr_moves = 2
+    app.logger.debug('decr_moves={} vs  remaining_moves={}'.format(
+        decr_moves, remaining_moves))
+    if decr_moves <= 0: return []  # can't walk
     
     tx, ty = tile['x'], tile['y']
     immediate_neighbors = [neighbor for neighbor in [
-        tiles_by_idx.get(ty*1000+tx+1, None), tiles_by_idx.get(ty*1000+tx-1, None),
-        tiles_by_idx.get((ty+1)*1000+tx+1, None), tiles_by_idx.get((ty-1)*1000+tx-1, None)]
-                 if neighbor is not None]
-    res = []
+        tiles_by_idx.get(xyloc(tile)+1, None), tiles_by_idx.get(xyloc(tile)-1, None),
+        tiles_by_idx.get(xyloc(tile)+1000, None), tiles_by_idx.get(xyloc(tile)-1000, None)]
+                           if neighbor is not None and neighbor['seen'] == 0 and
+                           neighbor['unit_army_id'] is None and
+                           xyloc(neighbor) != xyloc(prev) and
+                           xyloc(neighbor) != xyloc(unit_tile)
+    ]
+    app.logger.debug('neighbors of {},{},{}: {} - {} left - path:{}'.format(
+        tile['terrain_name'], tx, ty, "  ".join(["{}:{},{}".format(
+            t['terrain_name'],t['x'],t['y']) for t in immediate_neighbors]),
+        remaining_moves - decr_moves, pathstr(path)))
+    res = [] if xyloc(tile) == xyloc(unit_tile) else [tile] 
     for immediate_neighbor in immediate_neighbors:
-        res += unit_neighbors(tiles_by_idx, immediate_neighbor, army_id, unit_tile, remaining_moves)
+# asah         app.logger.debug("- neighbor at {},{}: {}".format( asah
+# asah             immediate_neighbor['x'], immediate_neighbor['y'], immediate_neighbor['terrain_name'])) asah
+        newpath = path + ([tile] if xyloc(tile) != xyloc(unit_tile) else [])
+        newres = unit_neighbors(tiles_by_idx, immediate_neighbor, army_id, unit_tile,
+                                remaining_moves - decr_moves, tile, newpath)
+        for r in newres:
+            r['seen'] = 1
+            if r['path'] is None:
+                r['path'] = newpath
+            res.append(r)
     return res
 
 def dist(unit, tile):
@@ -70,7 +102,7 @@ def dist(unit, tile):
     return ((ux-tx)**2 + (uy-ty)**2)**0.5
 
 def dict_strip_none(mydict):
-    return dict([(k,v) for k,v in mydict.items() if v is not None])
+    return dict([(k,v) for k,v in mydict.items() if v is not None and k not in ['primary_ammo','secondary_ammo','building_team_name','unit_army_name','defense','building_army_name','deployed_unit_id','slot1_deployed_unit_id','slot2_deployed_unit_id','tile_id','unit_id','unit_team_name' ]])
 
 def choose_move(player_id, army_id, game_info, tiles, players):
     # parsing
@@ -91,7 +123,7 @@ def choose_move(player_id, army_id, game_info, tiles, players):
             y = tile['y'] = int(tile['y_coordinate'])
             tiles_by_idx[y*1000 + x] = tile
             # fk it, just copy all the fields i.e. copy the whole tile
-            print("{}".format(dict_strip_none(tile)))
+            #app.logger.debug("{}".format(dict_strip_none(tile)))
             if tile['unit_army_id'] is not None:
                 units_list = my_units if tile['unit_army_id'] == army_id else their_units
                 units_list.append(tile)
@@ -121,18 +153,44 @@ def choose_move(player_id, army_id, game_info, tiles, players):
     my_units_by_dist = sorted(my_units, key=lambda tile: dist(other_hq[0], tile))
     dbg_ubd = "units by distance:\n"
     for unit in my_units_by_dist:
-        dbg_ubd += "{} at {},{}: {:.1f} from enemy hq [{},{}]\n".format(
-            unit['unit_name'], unit['x'], unit['y'], dist_from_enemy_hq(unit), ehqx, ehqy)
-        # TODO: what to move and where?
+        dbg_ubd += "{}{} at {},{}: {:.1f} from enemy hq [{},{}]: {}\n".format(
+            "moved " if str(unit['moved'])=='1' else "", unit['unit_name'],
+            unit['x'], unit['y'], dist_from_enemy_hq(unit), ehqx, ehqy, dict_strip_none(unit))
+            
+    app.logger.debug(dbg_ubd)
+
+    # TODO: what to move?  for now, lemmings to the slaughter
+    dbg_nbr = ""
+    for unit in my_units_by_dist:
+        if str(unit['moved'])=='1': continue
+        for tile in tiles_by_idx.values():
+            tile['seen'] = 0
+            tile['path'] = None
+        neighbors = unit_neighbors(tiles_by_idx, unit, army_id, unit, unit['unit_type']['move'], unit, [])
+        dbg_nbr += "walkable neighbors of {} at {},{},{}:\n".format(unit['unit_name'], unit['terrain_name'],unit['x'], unit['y'])
+        for nbr in sorted(neighbors, key=lambda r: r['y']*1000+r['x']):
+            dbg_nbr += "- {} at {},{} via {}\n".format(nbr['terrain_name'], nbr['x'], nbr['y'], pathstr(nbr['path']))
+                                                       
+    app.logger.debug(dbg_nbr)
+    return { "status": "success", "data": {
+            "purchase": False, "end_turn": False,
+                "move": { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],
+                          'movements': [
+                    {
+                        "xCoordinate": unit['x']-1, "yCoordinate": unit['y']
+                    }
+                ]
+                          #,"unit_action": "capture"
+                } }}
 
     my_castles_by_dist = sorted(my_castles, key=dist_from_enemy_hq)
     dbg_cbd = "castles by distance:\n"
     for castle in my_castles_by_dist:
         dbg_cbd += "castle at {},{}: {:.1f} from enemy hq [{},{}]: {}\n".format(
             castle['x'], castle['y'], dist_from_enemy_hq(castle), ehqx, ehqy, dict_strip_none(castle))
-        # TODO: what to build?        
     app.logger.debug(dbg_cbd)
 
+    # TODO: what to build?  For basic, just create knights... lots of knights...
     for castle in my_castles_by_dist:
         if castle['unit_army_id'] is None and funds > 0:
             return { "status": "success", "data": {
@@ -154,6 +212,10 @@ class BasicNextMove(Resource):
         else:
             player_id = str(request.form['botPlayerId'])
             game_info = json.loads(request.form['gameInfo'])
+        fh=open('reqlog', 'w')
+        fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
+            "{", player_id, json.dumps(game_info), "}"))
+        fh.close()
         tiles, players = game_info['tiles'], game_info['players']
         #app.logger.debug(json.dumps(tiles))
         army_id = players.get(player_id, {}).get('army_id', '')
