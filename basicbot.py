@@ -4,14 +4,25 @@
 
 from flask import Flask, request, json
 from flask_restful import Resource, Api
+import random
 
 app = Flask(__name__)
 api = Api(app)
+
+@app.before_request
+def set_random_seed():
+    random.seed(1337)   # reproducibility
 
 class Heartbeat(Resource):
     def post(self):
         return { "status": "success", "data": "OK" }
 
+def mkres(**args):
+    """ e.g. mkres(move={"x_coordinates": ... }) """
+    res = { "purchase": False, "end_turn": False, "move": False }
+    res.update(args)
+    return { "status": "success", "data": res }
+    
 # others are borders and ignored: Ocean, Reef
 WALKABLE_TERRAIN_TYPES = 'Forest,Plains,Town,Mountains,Headquarters,Castle,Road,Bridge,River'.split(',')
 NORMAL_TERRAIN = set('Plains,Town,Headquarters,Castle,Road,Bridge'.split(','))
@@ -83,8 +94,6 @@ def unit_neighbors(tiles_by_idx, tile, army_id, unit_tile, remaining_moves, prev
         remaining_moves - decr_moves, pathstr(path)))
     res = [] if xyloc(tile) == xyloc(unit_tile) else [tile] 
     for immediate_neighbor in immediate_neighbors:
-# asah         app.logger.debug("- neighbor at {},{}: {}".format( asah
-# asah             immediate_neighbor['x'], immediate_neighbor['y'], immediate_neighbor['terrain_name'])) asah
         newpath = path + ([tile] if xyloc(tile) != xyloc(unit_tile) else [])
         newres = unit_neighbors(tiles_by_idx, immediate_neighbor, army_id, unit_tile,
                                 remaining_moves - decr_moves, tile, newpath)
@@ -170,18 +179,14 @@ def choose_move(player_id, army_id, game_info, tiles, players):
         dbg_nbr += "walkable neighbors of {} at {},{},{}:\n".format(unit['unit_name'], unit['terrain_name'],unit['x'], unit['y'])
         for nbr in sorted(neighbors, key=lambda r: r['y']*1000+r['x']):
             dbg_nbr += "- {} at {},{} via {}\n".format(nbr['terrain_name'], nbr['x'], nbr['y'], pathstr(nbr['path']))
-                                                       
-    app.logger.debug(dbg_nbr)
-    return { "status": "success", "data": {
-            "purchase": False, "end_turn": False,
-                "move": { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],
-                          'movements': [
-                    {
-                        "xCoordinate": unit['x']-1, "yCoordinate": unit['y']
-                    }
-                ]
-                          #,"unit_action": "capture"
-                } }}
+        app.logger.debug(dbg_nbr)
+        # TODO: for now, randomness!
+        dest = random.choice(neighbors)
+        return mkres(move= { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],
+                             #,"unit_action": "capture"
+                             'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'] } for p in dest['path']] })
+
+
 
     my_castles_by_dist = sorted(my_castles, key=dist_from_enemy_hq)
     dbg_cbd = "castles by distance:\n"
@@ -193,15 +198,11 @@ def choose_move(player_id, army_id, game_info, tiles, players):
     # TODO: what to build?  For basic, just create knights... lots of knights...
     for castle in my_castles_by_dist:
         if castle['unit_army_id'] is None and funds > 0:
-            return { "status": "success", "data": {
-                "move": False, "end_turn": False,
-                "purchase": {'x_coordinate':castle['x_coordinate'], 'y_coordinate':castle['y_coordinate'], 'unit_name':'Knight'}}}
+            # randomly choose for now - helps see something happen
+            newunit = "Knight" if random.random() < 0.5 else "Unicorn"
+            return mkres(purchase = {'x_coordinate':castle['x_coordinate'], 'y_coordinate':castle['y_coordinate'], 'unit_name':newunit})
     
-    return { "status": "success", "data": {
-        "move": False,
-        "purchase": False,
-        "end_turn": True,
-    }}
+    return mkres(end_turn=True)
 
 class BasicNextMove(Resource):
     def post(self):
@@ -220,7 +221,7 @@ class BasicNextMove(Resource):
         #app.logger.debug(json.dumps(tiles))
         army_id = players.get(player_id, {}).get('army_id', '')
         move = choose_move(player_id, army_id, game_info, tiles, players)
-        app.logger.debug(move)
+        app.logger.debug("res: {}".format(move))
         return move
 
 api.add_resource(Heartbeat, '/meatshields/bot/getHeartbeat')
