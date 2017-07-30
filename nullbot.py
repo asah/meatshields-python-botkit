@@ -5,18 +5,18 @@
 from flask import Flask, request, json
 from flask_restful import Resource, Api
 
-app = Flask(__name__)
-api = Api(app)
+APP = Flask(__name__)
+API = Api(APP)
 
 class Heartbeat(Resource):
-    def post(self):
+    def post(self):             # pylint:disable=R0201
         return { "status": "success", "data": "OK" }
 
 class NullNextMove(Resource):
-    def post(self):
-        botPlayerId = request.form['botPlayerId']
-        gameInfo = json.loads(request.form['gameInfo'])
-        app.logger.debug('tiles[0]: {}...'.format(gameInfo['tiles'][0]))
+    def post(self):         # pylint:disable=R0201
+        #botPlayerId = request.form['botPlayerId']
+        game_info = json.loads(request.form['gameInfo'])
+        APP.logger.debug('tiles[0]: {}...'.format(game_info['tiles'][0]))
 
         # ... write your bot here ...
         
@@ -26,8 +26,8 @@ class NullNextMove(Resource):
             "end_turn": True,
             }}
 
-api.add_resource(Heartbeat, '/meatshields/bot/getHeartbeat')
-api.add_resource(NullNextMove, '/meatshields/bot/getNextMove')
+API.add_resource(Heartbeat, '/meatshields/bot/getHeartbeat')
+API.add_resource(NullNextMove, '/meatshields/bot/getNextMove')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    APP.run(debug=True)

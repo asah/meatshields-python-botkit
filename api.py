@@ -1,14 +1,14 @@
 from flask import Flask
 from flask_restful import Resource, Api
 
-app = Flask(__name__)
-api = Api(app)
+APP = Flask(__name__)
+API = Api(APP)
 
 class HelloWorld(Resource):
-    def get(self):
+    def get(self):  # pylint:disable=R0201
         return {'hello': 'world'}
 
-api.add_resource(HelloWorld, '/')
+API.add_resource(HelloWorld, '/')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    APP.run(debug=True)
