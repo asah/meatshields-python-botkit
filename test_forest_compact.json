@@ -28,7 +28,7 @@
     }
   },
   "speed": "0",
-  "tilemap": [
+  "__tilemap": [
     "tpppptfppppftppppt",
     "pcrrcrrrrrrrrcrrCP",
     "prpppptpttptpppPRP",

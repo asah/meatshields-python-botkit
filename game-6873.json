@@ -21,7 +21,7 @@
       "team_name": "teamA",
       "turn_order": "1" } },
   "speed": "0",
-  "tilemap": [
+  "__tilemap": [
     "tpppptfppppftppppt",
     "pcrrcrrrrrrrrcrrCP",
     "prpppptpttptpppPRP",

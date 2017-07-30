@@ -69,6 +69,11 @@ UNIT_TYPES = {
     'Giant':        { 'cost': 22000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
     'Thunderstorm': { 'cost': 28000, 'move': 4, 'attackmin': 3, 'attackmax': 5 },
 }
+UNIT_SHORTCODES = dict([(tkey, tkey[0]) for tkey in UNIT_TYPES.keys()])
+UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H' })
+UPPER_SHORTCODES_UNIT = dict([(tval,tkey) for tkey,tval in UNIT_SHORTCODES.items()])
+LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCODES.items()])
+
 CAPTURING_UNITS = set('Knight Archer Ninja'.split())
 ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['attackmin'] > 0])
 MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['attackmin'] > 1])
@@ -200,6 +205,7 @@ def unit_neighbors(tile, army_id, unit_tile, remaining_moves, prev, path):
         APP.logger.debug('decr_moves={} vs  remaining={}'.format(decr_moves, remaining_moves))
     if decr_moves == 0: return []  # impassable by this unit type
     if remaining_moves - decr_moves == 0 or (remaining_moves - decr_moves == -1 and decr_moves > 1):
+        tile['seen'] = 1
         return [tile]
     immediate_neighbors = [neighbor for neighbor in xyneighbors(tile, [prev, unit_tile])
                            if neighbor['seen'] == 0 and neighbor['unit_army_id'] is None]
@@ -255,6 +261,32 @@ def compact_tile_in_places_json(tiles):
     APP.logger.debug(res)
     return res
 
+def unitmap(tiles_list, army_id):
+    """unit maps are less helpful than tile maps because there's fewer of them and
+    they also have less than default (perfect) health.  But they're good for dev."""
+    # array of strings
+    len_x = max([tile['x'] for tile in tiles_list])
+    len_y = max([tile['y'] for tile in tiles_list])
+    text_map = [ [""] * (len_x+1) for _ in range(len_y+1)]
+    for tile in tiles_list:
+        xpos, ypos = tile['x'], tile['y']
+        #APP.logger.debug(tile)
+        if tile.get('unit_name') is not None:
+            mapchar = UNIT_SHORTCODES[tile['unit_name']]
+            text_map[ypos][xpos] = (mapchar.upper() if tile['unit_army_id'] == army_id
+                                    else mapchar.lower())
+        else:
+            text_map[ypos][xpos] = " "
+    return text_map
+
+def unitmap_list(tiles_list, army_id):
+    return ["".join(line) for line in unitmap(tiles_list, army_id)]
+
+def unitmap_json(tiles_list, army_id):
+    res = "\n".join(['    "{}",'.format(line) for line in unitmap_list(tiles_list, army_id)])
+    # strip trailing comma
+    return res[0:-1]
+
 def tilemap(tiles_list):
     # array of strings
     len_x = max([tile['x'] for tile in tiles_list])
@@ -302,8 +334,8 @@ def parse_map(army_id, tiles, game_info):
     TILES_BY_IDX = {}
     notable_tiles = []
     next_tile_id = 1000
-    if 'tilemap' in game_info:
-        for ypos, row in enumerate(game_info['tilemap']):
+    if '__tilemap' in game_info:
+        for ypos, row in enumerate(game_info['__tilemap']):
             for xpos, char in enumerate(row):
                 tile = set_xy_fields({
                     'in_fog': ("1" if char in LOWER_SHORTCODES_TERRAIN else "0"),
@@ -321,7 +353,7 @@ def parse_map(army_id, tiles, game_info):
     for tile_ar in tiles:
         for tile in tile_ar:
             tile = set_xy_fields(tile)
-            if 'tilemap' in game_info:
+            if '__tilemap' in game_info:
                 if tile['xyidx'] not in TILES_BY_IDX:
                     raise Exception("bad tile index {} - tilemap doesn't match JSON?".format(
                         tile['xyidx']))
@@ -330,7 +362,8 @@ def parse_map(army_id, tiles, game_info):
                 TILES_BY_IDX[tile['xyidx']] = tile
     tiles = list(TILES_BY_IDX.values())
     #APP.logger.debug("tiles={}".format(tiles))
-    APP.logger.debug("map:\n" + tilemap_json(tiles))
+    APP.logger.debug("tilemap:\n" + tilemap_json(tiles))
+    APP.logger.debug("unitmap:\n" + unitmap_json(tiles, army_id))
     for tile in tiles:
         # fk it, just copy all the fields i.e. copy the whole tile
         #APP.logger.debug("{}".format(tile_dict_strip(tile)))
@@ -421,30 +454,36 @@ def choose_move(player_id, army_id, game_info, tiles, players):
 
         # randomly choose a direction to walk
         # TODO: Unicorn moves 6 when loaded
+        unit['seen'] = 1
+        unit['path'] = []
         for tile in TILES_BY_IDX.values():
             tile['seen'] = 0
-            tile['path'] = []
+            tile['path'] = None
         unit_max_move = unit['unit_type']['move']
         # not moving is a valid choice
-        neighbors = unit_neighbors(unit, army_id, unit, unit_max_move, unit, []) + [unit]
-        dest = random.choice(neighbors)
-        dest['path'].append(dest)
-        dbg_nbrs.append("walkable neighbors of {}, move={}:".format(
-            tilestr(unit), unit_max_move))
-        for nbr in sorted(neighbors, key=lambda r: r['xy']):
-            dbg_nbrs.append("{} {} via {}".format(
-                "=>" if dest['xy']==nbr['xy'] else " -",
-                tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
-        APP.logger.debug("\n".join(dbg_nbrs))
         move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'] }
+        neighbors = unit_neighbors(unit, army_id, unit, unit_max_move, unit, [])
+        neighbors.append(unit)
+        dest = random.choice(neighbors)
         if dest['xy'] == unit['xy']:
+            dbg_nbrs.append("no walkable neighbors for {}, move={}:".format(
+                tilestr(unit), unit_max_move))
             move.update(
                 { '__unit_name': unit_type, '__unit_action': 'no_movement', 'movements': [] })
         else:
+            dest['path'].append(dest)
             move.update(
                 { '__unit_name': unit_type, '__unit_action': 'simple_movement',
-                  'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'] }
+                  'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'],
+                                   '__terrain': p['terrain_name'] }
                                  for p in dest['path']] })
+            dbg_nbrs.append("walkable neighbors of {}, move={}:".format(
+                tilestr(unit), unit_max_move))
+            for nbr in sorted(neighbors, key=lambda r: r['xy']):
+                dbg_nbrs.append("{} {} via {}".format(
+                    "=>" if dest['xy']==nbr['xy'] else " -",
+                    tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
+        APP.logger.debug("\n".join(dbg_nbrs))
 
         # usually capture open towns, castles and headquarters
         if can_capture(dest, unit, army_id) and random.random() < 0.90:
@@ -459,8 +498,8 @@ def choose_move(player_id, army_id, game_info, tiles, players):
             dbgmsgs = [ "enemy units from {}".format(tilestr(attack_tile)) ]
             dbgmsgs.append("\n".join(["{}: {}".format(
                 dist(attack_tile, enemy_unit), tilestr(enemy_unit)) for enemy_unit in ENEMY_UNITS]))
-            dbgmsgs.append("attack_neighbors: {}  for {}".format(
-                pathstr(attack_neighbors), tilestr(dest, show_details=True)))
+            dbgmsgs.append("attack_neighbors for {}: {}".format(
+                tilestr(dest), "\n".join([pathstr(tile['path']) for tile in attack_neighbors])))
             random.shuffle(attack_neighbors)
             for attack_neighbor in attack_neighbors:
                 dbgmsgs.append("- {}".format(tilestr(attack_neighbor, show_details=True)))
@@ -485,9 +524,9 @@ def build_new_units(my_info, dbg_force_tile):
     my_castles_by_dist = sorted(MY_CASTLES, key=dist_from_enemy_hq)
     dbg_castles = ["castles by distance:"]
     for castle in my_castles_by_dist:
-        dbg_castles.append("{}: {:.1f} from enemy hq @{}: {}".format(
+        dbg_castles.append("{}: {:.1f} from enemy hq @{}".format(
             tilestr(castle, show_details=True), dist_from_enemy_hq(castle),
-            tile2xystr(OTHER_HQ[0]), tile_dict_strip(castle)))
+            tile2xystr(OTHER_HQ[0])))
     APP.logger.debug("\n".join(dbg_castles))
     funds = int(my_info['funds'])
     for castle in my_castles_by_dist:
@@ -508,9 +547,10 @@ def compressed_tile(tile):
                              'terrain_name','in_fog'
                  ])
 
-def compressed_game_info(game_info):
+def compressed_game_info(game_info, army_id):
     """encoded as tilemap and interesting tiles"""
-    game_info['tilemap'] = tilemap_list(TILES_BY_IDX.values())
+    game_info['__tilemap'] = tilemap_list(TILES_BY_IDX.values())
+    game_info['__unitmap'] = unitmap_list(TILES_BY_IDX.values(), army_id)
     game_info['tiles'] = [[]]   # format is nested lists, but there's no meaning
     for tile in TILES_BY_IDX.values():
         tile = compressed_tile(tile)
@@ -554,7 +594,7 @@ class BasicNextMove(Resource):
 
         # save the game, for debugging
         if DEBUG:
-            game_info_json = compact_json_dumps(compressed_game_info(game_info))
+            game_info_json = compact_json_dumps(compressed_game_info(game_info, army_id))
             game_fh = open('game-{}.json'.format(game_id), 'w')
             game_fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
                 "{", player_id, game_info_json, "}"))
