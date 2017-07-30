@@ -312,7 +312,7 @@ def parse_map(army_id, tiles, game_info):
                 })
                 tile.update(dict((fld,val) for fld, val in TILE_DEFAULT_VALUES.items()
                                  if fld not in tile))
-                tile['defernse'] = TERRAIN_DEFENSE[tile['terrain_name']]
+                tile['defense'] = TERRAIN_DEFENSE[tile['terrain_name']]
                 tile['tile_id'] = next_tile_id
                 next_tile_id += 1
                 TILES_BY_IDX[tile['xyidx']] = tile
@@ -511,13 +511,13 @@ def compressed_tile(tile):
 def compressed_game_info(game_info):
     """encoded as tilemap and interesting tiles"""
     game_info['tilemap'] = tilemap_list(TILES_BY_IDX.values())
-    game_info['tiles'] = []
+    game_info['tiles'] = [[]]   # format is nested lists, but there's no meaning
     for tile in TILES_BY_IDX.values():
         tile = compressed_tile(tile)
         # skip tiles that are fully encoded by the tilemap
         if tile.keys() == set(['in_fog', 'xy', 'terrain_name']):
             continue
-        game_info['tiles'].append(compressed_tile(tile))
+        game_info['tiles'][0].append(tile)
     return game_info
 
 class BasicNextMove(Resource):
@@ -539,7 +539,7 @@ class BasicNextMove(Resource):
             if game_id not in GAMES:
                 GAMES[game_id] = { 'moves': [] }
 
-        # save the request, for replay
+        # save the request, for replay (low level debugging)
         game_info_json = ""
         if DEBUG:
             game_info_json = json.dumps(game_info, indent=2, sort_keys=True)
@@ -553,14 +553,11 @@ class BasicNextMove(Resource):
         move = choose_move(player_id, army_id, game_info, tiles, players)
 
         # save the game, for debugging
-        # game_info creates circular references, so we use a cached copy
         if DEBUG:
-            GAMES[game_id]['game_info'] = 1234567890
-            GAMES[game_id]['moves'].append(move)
-            game_json = compact_json_dumps(GAMES[game_id]).replace('1234567890', game_info_json)
-            game_json = compact_json_dumps(compressed_game_info(game_info))
+            game_info_json = compact_json_dumps(compressed_game_info(game_info))
             game_fh = open('game-{}.json'.format(game_id), 'w')
-            game_fh.write(game_json)
+            game_fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
+                "{", player_id, game_info_json, "}"))
             game_fh.close()
 
         # compact response helps debugging
