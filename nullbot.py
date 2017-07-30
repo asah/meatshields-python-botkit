@@ -14,7 +14,7 @@ class Heartbeat(Resource):
 
 class NullNextMove(Resource):
     def post(self):         # pylint:disable=R0201
-        #botPlayerId = request.form['botPlayerId']
+        #bot_player_id = request.form['botPlayerId']
         game_info = json.loads(request.form['gameInfo'])
         APP.logger.debug('tiles[0]: {}...'.format(game_info['tiles'][0]))
 
