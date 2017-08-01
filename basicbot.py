@@ -5,10 +5,11 @@
 # basicbot.py
 #
 # TODO list:
+# - walk over friends, but not land on them
 # - Unicorn loading & unloading
 # - Unicorn moves 6 when loaded
 # - healing
-# - multuple enemies
+# - multiple enemies
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
@@ -17,14 +18,18 @@ from flask import Flask, request, json, make_response
 from flask_restful import Resource, Api
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
-DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
+
+# use env vars to turn on verbose debugging -- more control and shuts up pylint
+DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '1') == '1')
 DBG_PARSE_TIME = (os.environ.get('DBG_PARSE_TIME', '0') == '1')
+DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 
 APP = Flask(__name__)
 API = Api(APP)
 
 # remember turns and moves between API calls - helps debugging
 GAMES = {}
+LAST_MOVES = {}
 
 @APP.before_request
 def set_random_seed():
@@ -42,16 +47,18 @@ def mkres(**args):
 
 # others are borders and ignored: Ocean, Reef
 NORMAL_TERRAIN = set(['Plains','Town','Headquarters','Castle','Road','Bridge','Shore'])
-WALKABLE_TERRAIN_TYPES = set(list(NORMAL_TERRAIN) + ['Forest','Mountains','River'])
+WALKABLE_TERRAIN = set(list(NORMAL_TERRAIN) + ['Forest','Mountains','River'])
 CAPTURABLE_TERRAIN = set(['Headquarters','Castle','Town'])
 TERRAIN_DEFENSE = {
+    'Mountains': 4,
     'Headquarters': 3, 'Town': 3, 'Castle': 3,
     'Forest': 2,
     'Plains': 1,
-    'Shore': 0, 'Ocean': 0, 'Road': 0, 'River': 0, 'Bridge': 0,
+    'Shore': 0, 'Ocean': 0, 'Road': 0, 'River': 0, 'Bridge': 0, 'Reef': 0
 }
 TERRAIN_SHORTCODES = dict([(tkey, tkey[0]) for tkey in TERRAIN_DEFENSE.keys()])
 TERRAIN_SHORTCODES['River'] = 'V'
+TERRAIN_SHORTCODES['Reef'] = 'E'
 UPPER_SHORTCODES_TERRAIN = dict([(tval,tkey) for tkey,tval in TERRAIN_SHORTCODES.items()])
 LOWER_SHORTCODES_TERRAIN = dict([(tval.lower(),tkey) for tkey,tval in TERRAIN_SHORTCODES.items()])
 
@@ -60,6 +67,7 @@ UNIT_TYPES = {
     'Unicorn':      { 'cost':  1000, 'move': 4, 'attackmin': 0, 'attackmax': 0 },
     'Archer':       { 'cost':  2000, 'move': 2, 'attackmin': 2, 'attackmax': 3 },
     'Ninja':        { 'cost':  3000, 'move': 2, 'attackmin': 1, 'attackmax': 1 },
+    # mounts are doubled for easier integer math
     'Mount':        { 'cost':  4000, 'move': 8, 'attackmin': 1, 'attackmax': 1 },
     'Boulder':      { 'cost':  6000, 'move': 5, 'attackmin': 2, 'attackmax': 3 },
     'Mage':         { 'cost':  6000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
@@ -69,8 +77,9 @@ UNIT_TYPES = {
     'Giant':        { 'cost': 22000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
     'Thunderstorm': { 'cost': 28000, 'move': 4, 'attackmin': 3, 'attackmax': 5 },
 }
+
 UNIT_SHORTCODES = dict([(tkey, tkey[0]) for tkey in UNIT_TYPES.keys()])
-UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H' })
+UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H', 'Mage': 'E' })
 UPPER_SHORTCODES_UNIT = dict([(tval,tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 
@@ -94,6 +103,12 @@ TILE_DEFAULT_VALUES = dict([(tdv_fld,None) for tdv_fld in re.split(r'[ ,\r\n]+',
 TILE_KNOWN_FIELDS = list(TILE_DEFAULT_VALUES.keys()) + [
     'terrain_name', 'x_coordinate', 'y_coordinate', 'xy', 'xyidx', 'xystr'
 ]
+
+def is_first_move_in_turn(game_id):
+    last_move = LAST_MOVES.get(game_id)
+    if last_move is None: return True # very first move!
+    # if last_move is end_turn, then it's the 1st move of the next turn
+    return last_move['data']['end_turn']
 
 def tile2xystr(tile):
     """indexed from 0"""
@@ -179,34 +194,36 @@ def xyneighbors(tile, exclude_tiles, unit_present=None):
 
 def unit_neighbors(tile, army_id, unit_tile, remaining_moves, prev, path):
     # counted down to the end
-    # TODO: test fractional case e.g. Boulder walking through Forest
-    #APP.logger.debug('unit_neighbors(tile={}, unit_tile={}, prev={}, path={}'.format(
-    #tilestr(tile), tilestr(unit_tile), tilestr(prev, show_details=True), pathstr(path)))
+    if DBG_MOVEMENT:
+        APP.logger.debug(
+            'unit_neighbors(tile={}, unit_tile={}, remaining_moves={}, prev={}, path={}'.format(
+                tilestr(tile), tilestr(unit_tile), remaining_moves, tilestr(prev), pathstr(path)))
     unit_type = unit_tile['unit_type']
     # enemy tile - no neighbors allowed
     if tile['unit_army_id'] not in [None, army_id]: return []
     terrain = tile['terrain_name']
     # impassable by any unit types
-    if terrain not in WALKABLE_TERRAIN_TYPES: return []
+    if terrain not in WALKABLE_TERRAIN: return []
     # impassable by this unit type
     decr_moves = 0
     if unit_type == 'Knight':
         if terrain in NORMAL_TERRAIN: decr_moves = 1
-        elif terrain in ['Forest','River','Mountains']: decr_moves = 2
+        elif terrain in WALKABLE_TERRAIN: decr_moves = 2
     elif unit_type in ['Archer','Ninja']:
-        decr_moves = 1
+        if terrain in WALKABLE_TERRAIN: decr_moves = 1
+    elif unit_type in ['Mount', 'Brimstone', 'Thunderstorm']:
+        if terrain in ['Plains','Forest']: decr_moves = 2
+        elif terrain in NORMAL_TERRAIN: decr_moves = 1
     elif unit_type == 'Mount':
-        if terrain in ['Road','Bridge']: decr_moves = 1
-        elif terrain in NORMAL_TERRAIN: decr_moves = 2
-    else: # normal walking units
-        if terrain in NORMAL_TERRAIN: decr_moves = 1
-        elif terrain == 'Forest': decr_moves = 2
+        if terrain in ['Plains','Forest']: decr_moves = 2
+        elif terrain in NORMAL_TERRAIN: decr_moves = 1
+    else:
+        if terrain == 'Forest': decr_moves = 2
+        elif terrain in NORMAL_TERRAIN: decr_moves = 1
     if DBG_MOVEMENT:
         APP.logger.debug('decr_moves={} vs  remaining={}'.format(decr_moves, remaining_moves))
     if decr_moves == 0: return []  # impassable by this unit type
-    if remaining_moves - decr_moves == 0 or (remaining_moves - decr_moves == -1 and decr_moves > 1):
-        tile['seen'] = 1
-        return [tile]
+    if remaining_moves < decr_moves: return [] # too far
     immediate_neighbors = [neighbor for neighbor in xyneighbors(tile, [prev, unit_tile])
                            if neighbor['seen'] == 0 and neighbor['unit_army_id'] is None]
     if DBG_MOVEMENT:
@@ -252,7 +269,7 @@ def compact_tile_in_place(tile):
     del tile['y_coordinate']
     return tile
     
-def compact_tile_in_places_json(tiles):
+def compact_tile_in_place_json(tiles):
     new_tiles = copy.deepcopy(tiles)
     for tile_ar in new_tiles:
         for tile in tile_ar:
@@ -293,7 +310,6 @@ def tilemap(tiles_list):
     len_y = max([tile['y'] for tile in tiles_list])
     text_map = [ [""] * (len_x+1) for _ in range(len_y+1)]
     for tile in tiles_list:
-        #APP.logger.debug(tile)
         terrain_name = tile['terrain_name']
         mapchar = TERRAIN_SHORTCODES.get(terrain_name, "?:"+terrain_name)
         xpos, ypos = tile['x'], tile['y']
@@ -361,13 +377,9 @@ def parse_map(army_id, tiles, game_info):
             else:
                 TILES_BY_IDX[tile['xyidx']] = tile
     tiles = list(TILES_BY_IDX.values())
-    #APP.logger.debug("tiles={}".format(tiles))
-    APP.logger.debug("tilemap:\n" + tilemap_json(tiles))
-    APP.logger.debug("unitmap:\n" + unitmap_json(tiles, army_id))
     for tile in tiles:
-        # fk it, just copy all the fields i.e. copy the whole tile
-        #APP.logger.debug("{}".format(tile_dict_strip(tile)))
-        if tile['unit_army_id'] not in ["", None]:
+        # unit_name will be absent if unit is killed...
+        if tile.get('unit_name') is not None and tile['unit_army_id'] not in ["", None]:
             units_list = MY_UNITS if tile['unit_army_id'] == army_id else ENEMY_UNITS
             units_list.append(tile)
             tile['unit_type'] = UNIT_TYPES[tile['unit_name']]
@@ -417,13 +429,12 @@ def my_units_by_dist():
 def msec(timedelta):
     return timedelta.seconds*1000 + int(timedelta.microseconds/1000)
 
-def choose_move(player_id, army_id, game_info, tiles, players):
+def choose_move(player_id, army_id, game_info, players):
     my_info = players[player_id]
     # debug hack to force the algorithm to 'pick' this tile for the move,
     # building units at a castle, moving a unit, etc.
     dbg_force_tile = game_info.get('dbg_force_tile', '')   # x,y padded with zeroes, e.g. 04,14
     #todo: dbg_force_action = game_info.get('dbg_force_action', '')
-    parse_map(army_id, tiles, game_info)
 
     # for each unit ordered by nearest to the enemy HQ
     # - if castle can be captured, capture it
@@ -435,7 +446,8 @@ def choose_move(player_id, army_id, game_info, tiles, players):
 
     # TODO: what to move?  for now, lemmings to the slaughter
     dbg_nbrs = []
-    APP.logger.debug("dbg_force_tile: {}".format(dbg_force_tile))
+    if dbg_force_tile != '':
+        APP.logger.debug("dbg_force_tile: {}".format(dbg_force_tile))
     for unit in my_units_by_dist():
         if str(unit['moved'])=='1': continue
         if dbg_force_tile not in ['', unit['xystr']]: continue
@@ -479,7 +491,7 @@ def choose_move(player_id, army_id, game_info, tiles, players):
                                  for p in dest['path']] })
             dbg_nbrs.append("walkable neighbors of {}, move={}:".format(
                 tilestr(unit), unit_max_move))
-            for nbr in sorted(neighbors, key=lambda r: r['xy']):
+            for nbr in sorted(neighbors, key=lambda r: r['xystr']):
                 dbg_nbrs.append("{} {} via {}".format(
                     "=>" if dest['xy']==nbr['xy'] else " -",
                     tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
@@ -562,6 +574,11 @@ def compressed_game_info(game_info, army_id):
 
 class BasicNextMove(Resource):
     def post(self):
+        if DBG_PRINT_SHORTCODES:
+            APP.logger.debug("\n".join(["{}: {}".format(name, typ) for name, typ in
+                                        sorted(TERRAIN_SHORTCODES.items())]))
+            APP.logger.debug("\n".join(["{}: {}".format(name, typ) for name, typ in
+                                        sorted(UNIT_SHORTCODES.items())]))
         start_time = datetime.datetime.now()
         if request.data:
             jsondata = json.loads(request.data)
@@ -590,7 +607,15 @@ class BasicNextMove(Resource):
 
         tiles, players = game_info['tiles'], game_info['players']
         army_id = players.get(player_id, {}).get('army_id', '')
-        move = choose_move(player_id, army_id, game_info, tiles, players)
+        parse_map(army_id, tiles, game_info)
+        tiles_list = TILES_BY_IDX.values()
+        if is_first_move_in_turn(game_info['game_id']):
+            APP.logger.debug("tilemap:\n" + tilemap_json(tiles_list))
+            APP.logger.debug("unitmap:\n" + unitmap_json(tiles_list, army_id))
+        move = choose_move(player_id, army_id, game_info, players)
+        if move['data']['end_turn']:
+            APP.logger.debug("tilemap:\n" + tilemap_json(tiles_list))
+            APP.logger.debug("unitmap:\n" + unitmap_json(tiles_list, army_id))
 
         # save the game, for debugging
         if DEBUG:
@@ -600,6 +625,8 @@ class BasicNextMove(Resource):
                 "{", player_id, game_info_json, "}"))
             game_fh.close()
 
+        LAST_MOVES[game_id] = move
+            
         # compact response helps debugging
         if DEBUG:
             APP.logger.debug("move response: \n{}".format(compact_json_dumps(move)))
