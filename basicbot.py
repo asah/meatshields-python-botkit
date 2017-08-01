@@ -5,7 +5,6 @@
 # basicbot.py
 #
 # TODO list:
-# - walk over friends, but not land on them
 # - Unicorn loading & unloading
 # - Unicorn moves 6 when loaded
 # - healing
@@ -20,7 +19,7 @@ from flask_restful import Resource, Api
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
-DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '1') == '1')
+DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
 DBG_PARSE_TIME = (os.environ.get('DBG_PARSE_TIME', '0') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 
@@ -225,7 +224,8 @@ def unit_neighbors(tile, army_id, unit_tile, remaining_moves, prev, path):
     if decr_moves == 0: return []  # impassable by this unit type
     if remaining_moves < decr_moves: return [] # too far
     immediate_neighbors = [neighbor for neighbor in xyneighbors(tile, [prev, unit_tile])
-                           if neighbor['seen'] == 0 and neighbor['unit_army_id'] is None]
+                           if neighbor['seen'] == 0 and
+                           neighbor['unit_army_id'] in [None, army_id]]
     if DBG_MOVEMENT:
         APP.logger.debug('neighbors of {}: {}, path:{}, moves left:{}'.format(
             tilestr(tile), pathstr(immediate_neighbors), pathstr(path),
@@ -475,7 +475,9 @@ def choose_move(player_id, army_id, game_info, players):
         # not moving is a valid choice
         move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'] }
         neighbors = unit_neighbors(unit, army_id, unit, unit_max_move, unit, [])
-        neighbors.append(unit)
+        neighbors.append(unit)  # i.e. don't move!
+        # we included neighbors with 'our' units on them, but those can't be destinations...
+        neighbors = [nbr for nbr in neighbors if nbr['unit_army_id'] is None]
         dest = random.choice(neighbors)
         if dest['xy'] == unit['xy']:
             dbg_nbrs.append("no walkable neighbors for {}, move={}:".format(
