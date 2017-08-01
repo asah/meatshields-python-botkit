@@ -2823,7 +2823,7 @@
           "fuel": "70",
           "health": "100",
           "in_fog": "0",
-          "moved": 1,
+          "moved": "1",
           "primary_ammo": "3",
           "secondary_ammo": "100",
           "slot1_deployed_unit_health": null,

@@ -2541,7 +2541,7 @@
         "fuel": "100",
         "health": "100",
         "in_fog": "0",
-        "moved": 1,
+        "moved": "1",
         "primary_ammo": "0",
         "secondary_ammo": "0",
         "slot1_deployed_unit_health": null,

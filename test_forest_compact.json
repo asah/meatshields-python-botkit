@@ -93,7 +93,7 @@
         "deployed_unit_id": "126793",
         "fuel": "100",
         "health": "100",
-        "moved": 1,
+        "moved": "1",
         "primary_ammo": "0",
         "secondary_ammo": "0",
         "unit_army_id": "1",
