@@ -20,8 +20,9 @@ DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
 DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
-DBG_PARSE_TIME = (os.environ.get('DBG_PARSE_TIME', '0') == '1')
+DBG_TIMING = (os.environ.get('DBG_TIMING', '1') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
+DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 
 APP = Flask(__name__)
 API = Api(APP)
@@ -113,6 +114,9 @@ def tile2xystr(tile):
     """indexed from 0"""
     return "{:02d},{:02d}".format(tile['x'], tile['y'])
 
+def sorted_tiles(tiles):
+    return sorted(tiles, key=lambda tile: tile['xystr'])
+
 def compact_json_dumps(data):
     compact_response = json.dumps(data, indent=2, sort_keys=True)
     
@@ -132,7 +136,7 @@ def compact_json_dumps(data):
     # keep building_army_name and building_team_name on the same line as building_army_id
     # keep 
     compact_response = re.sub(
-        r'(?m)\r?\n +"(__unit_name|building_army_name|building_team_name|'+
+        r'(?m)\r?\n +"(__unit_name|__walkcost|building_army_name|building_team_name|'+
         r'health|secondary_ammo|unit_army_name|unit_id|unit_name|unit_team_name)',
         r' "\1', compact_response)
     return compact_response
@@ -179,68 +183,73 @@ def can_capture(tile, unit, army_id):
     return (tile['terrain_name'] in CAPTURABLE_TERRAIN and unit['unit_name'] in CAPTURING_UNITS and
             not is_my_building(tile, army_id))
 
-def xyneighbors(tile, exclude_tiles, unit_present=None):
-    """exclude_tiles is a list of tiles to exclude;
-    unit_present=True: exclude empty tiles; unit_present=False: exclude filled tiles"""
-    excl_xyidxs = set([excl['xyidx'] for excl in exclude_tiles])
-    return [neighbor for neighbor in
-            [TILES_BY_IDX.get(tile['xyidx']+1, None), TILES_BY_IDX.get(tile['xyidx']-1, None),
-             TILES_BY_IDX.get(tile['xyidx']+1000, None), TILES_BY_IDX.get(tile['xyidx']-1000, None)]
-            if neighbor is not None and neighbor['xyidx'] not in excl_xyidxs and
-            ((unit_present is None) or
-             (unit_present is True and has_unit(neighbor)) or
-             (unit_present is False and not has_unit(neighbor))) ]
+def xyneighbors(tile):
+    """simple adjacency excluding tiles that are off the map."""
+    xyidx = tile['xyidx']
+    return [nbr for nbr in [
+        # east/west aka x +/- 1
+        TILES_BY_IDX.get(xyidx+1),    TILES_BY_IDX.get(xyidx-1),
+        # north/south aka y +/- 1
+        TILES_BY_IDX.get(xyidx+1000), TILES_BY_IDX.get(xyidx-1000)
+    ] if nbr is not None]
 
-def unit_neighbors(tile, army_id, unit_tile, remaining_moves, prev, path):
-    # counted down to the end
-    if DBG_MOVEMENT:
-        APP.logger.debug(
-            'unit_neighbors(tile={}, unit_tile={}, remaining_moves={}, prev={}, path={}'.format(
-                tilestr(tile), tilestr(unit_tile), remaining_moves, tilestr(prev), pathstr(path)))
-    unit_type = unit_tile['unit_type']
-    # enemy tile - no neighbors allowed
-    if tile['unit_army_id'] not in [None, army_id]: return []
-    terrain = tile['terrain_name']
-    # impassable by any unit types
-    if terrain not in WALKABLE_TERRAIN: return []
-    # impassable by this unit type
-    decr_moves = 0
+def walk_cost(unit_type, terrain):
+    if terrain not in WALKABLE_TERRAIN: return 0
     if unit_type == 'Knight':
-        if terrain in NORMAL_TERRAIN: decr_moves = 1
-        elif terrain in WALKABLE_TERRAIN: decr_moves = 2
+        if terrain in NORMAL_TERRAIN: return 1
+        else: return 2    # already checked for WALKABLE_TERRAIN
     elif unit_type in ['Archer','Ninja']:
-        if terrain in WALKABLE_TERRAIN: decr_moves = 1
+        return 1          # already checked for WALKABLE_TERRAIN
     elif unit_type in ['Mount', 'Brimstone', 'Thunderstorm']:
-        if terrain in ['Plains','Forest']: decr_moves = 2
-        elif terrain in NORMAL_TERRAIN: decr_moves = 1
+        if terrain in ['Plains','Forest']: return 2
+        elif terrain in NORMAL_TERRAIN: return 1
     elif unit_type == 'Mount':
-        if terrain in ['Plains','Forest']: decr_moves = 2
-        elif terrain in NORMAL_TERRAIN: decr_moves = 1
+        if terrain in ['Plains','Forest']: return 2
+        elif terrain in NORMAL_TERRAIN: return 1
     else:
-        if terrain == 'Forest': decr_moves = 2
-        elif terrain in NORMAL_TERRAIN: decr_moves = 1
+        if terrain == 'Forest': return 2
+        elif terrain in NORMAL_TERRAIN: return 1
+    # impassable
+    return 0
+
+def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
+    unit_type, terrain = unit_tile['unit_name'], tile['terrain_name']
+    walkcost = walk_cost(unit_type, terrain)
+    # impassable by this unit type, or beyond the range
+    if walkcost == 0 or cost_remaining < walkcost: return []
+    tile['seen'] = cost_remaining
+    tile['path'] = path   # path to get to this tile
+    dest_tiles = [tile]
     if DBG_MOVEMENT:
-        APP.logger.debug('decr_moves={} vs  remaining={}'.format(decr_moves, remaining_moves))
-    if decr_moves == 0: return []  # impassable by this unit type
-    if remaining_moves < decr_moves: return [] # too far
-    immediate_neighbors = [neighbor for neighbor in xyneighbors(tile, [prev, unit_tile])
-                           if neighbor['seen'] == 0 and
-                           neighbor['unit_army_id'] in [None, army_id]]
+        APP.logger.debug(('walkable_tiles(tile={}, unit_tile={}, walkcost={}, '+
+                          'cost_remaining={}, path={}, typ={}, terr={}'
+        ).format(tilestr(tile), tilestr(unit_tile), walkcost, cost_remaining,
+                 pathstr(path), unit_type, terrain))
+    immediate_neighbors = [nbr for nbr in xyneighbors(tile) if
+                           # revisit tiles only if there's greater walking range left
+                           cost_remaining > nbr['seen'] and
+                           # walk over friends but not enemies
+                           nbr['unit_army_id'] in [None, army_id]]
     if DBG_MOVEMENT:
-        APP.logger.debug('neighbors of {}: {}, path:{}, moves left:{}'.format(
+        APP.logger.debug('immediate neighbors of {}: {}, path:{}, moves left:{}'.format(
             tilestr(tile), pathstr(immediate_neighbors), pathstr(path),
-            remaining_moves - decr_moves))
-    res = [] if tile['xyidx'] == unit_tile['xyidx'] else [tile]
+            cost_remaining - walkcost))
+    newpath = path + ([] if tile['xy'] == unit_tile['xy'] else [tile])
     for immediate_neighbor in immediate_neighbors:
-        newpath = path + ([tile] if tile['xyidx'] != unit_tile['xyidx'] else [])
-        newres = unit_neighbors(immediate_neighbor, army_id, unit_tile,
-                                remaining_moves - decr_moves, tile, newpath)
-        for rec in newres:
-            rec['seen'] = 1
-            if rec['path'] is None:
-                rec['path'] = newpath
-            res.append(rec)
-    return res
+        destinations = walkable_tiles(immediate_neighbor, army_id, unit_tile,
+                                      cost_remaining - walkcost, newpath)
+        msgs = ['neighbors of {}, newpath={}, destinations:'.format(
+            tilestr(immediate_neighbor), pathstr(newpath))]
+        for nbr in destinations:
+            if nbr['path'] is None:
+                nbr['path'] = newpath
+            dest_tiles.append(nbr)
+            msgs.append('{}: {}'.format(tilestr(nbr), pathstr(nbr['path'])))
+        if DBG_MOVEMENT:
+            APP.logger.debug('\n'.join(msgs))
+    if DBG_MOVEMENT:
+        APP.logger.debug('dest_tiles: {}'.format(";".join([tilestr(til) for til in dest_tiles])))
+    return dest_tiles
 
 def dist(unit, tile):
     """euclidean distance - used for missile attacks and a (bad) approximation of travel time."""
@@ -324,6 +333,39 @@ def tilemap_json(tiles_list):
     # strip trailing comma
     return res[0:-1]
 
+def movemap(tiles_list, army_id, turnmove):
+    text_map = unitmap(tiles_list, army_id)
+    if turnmove['data']['end_turn']: return text_map
+    def set_text_map(tmap, xyitem, suffix, val):
+        xpos = int(xyitem['x'+suffix])
+        ypos = int(xyitem['y'+suffix])
+        tmap[ypos][xpos] = val
+        return tmap
+    if turnmove['data']['purchase']:
+        purch = turnmove['data']['purchase']
+        return set_text_map(text_map, purch, '_coordinate', UNIT_SHORTCODES[purch['unit_name']])
+    move = turnmove['data']['move']
+    if 'x_coordinate' in move:
+        for movement in move['movements']:
+            set_text_map(text_map, movement, 'Coordinate', ".")
+    if move.get('unit_action', '') == 'capture':
+        if len(move['movements']) == 0:
+            set_text_map(text_map, move, '_coordinate', "#")
+        else:
+            set_text_map(text_map, move['movements'][-1], 'Coordinate', "#")
+    if 'x_coord_attack' in move:
+        set_text_map(text_map, move, '_coord_attack', "x")
+    return text_map
+
+def movemap_list(tiles_list, army_id, turnmove):
+    return ["".join(line) for line in movemap(tiles_list, army_id, turnmove)]
+
+def movemap_json(tiles_list, army_id, turnmove):
+    res = "\n".join(['    "{}",'.format(line) for line in
+                     movemap_list(tiles_list, army_id, turnmove)])
+    # strip trailing comma
+    return res[0:-1]
+
 def tile2xyidx(tile):
     return tile['y']*1000 + tile['x']
 
@@ -397,9 +439,10 @@ def parse_map(army_id, tiles, game_info):
         elif tile['terrain_name'] == 'Town':
             town_list = MY_TOWNS if is_my_building(tile, army_id) else OTHER_TOWNS
             town_list.append(tile)
-    notable_tiles = sorted(notable_tiles, key=lambda tile: tile['xystr'])
-    APP.logger.debug("notable_tiles:  my army_id={}\n{}".format(
-        army_id, "\n".join([tilestr(tile, show_details=True) for tile in notable_tiles])))
+    if DBG_NOTABLE_TILES:
+        APP.logger.debug("notable_tiles:  my army_id={}\n{}".format(
+            army_id, "\n".join([tilestr(tile, show_details=True)
+                                for tile in sorted_tiles(notable_tiles)])))
 
 def dist_from_enemy_hq(tile):
     return dist(OTHER_HQ[0], tile)
@@ -417,13 +460,14 @@ def tile_details_str(tile, extra_fields_to_exclude=None):
 def my_units_by_dist():
     # todo: support multiple enemies
     units_by_dist = sorted(MY_UNITS, key=lambda tile: dist(OTHER_HQ[0], tile))
-    dbg_units = ["units by distance:"]
-    for unit in units_by_dist:
-        dbg_units.append("{}{}: {:.0f} from enemy hq [{},{}]: {}".format(
-            "moved " if str(unit['moved'])=='1' else "", tilestr(unit),
-            dist_from_enemy_hq(unit), OTHER_HQ[0]['x'], OTHER_HQ[0]['y'],
-            tile_details_str(unit, ['moved'])))
-    APP.logger.debug("\n".join(dbg_units))
+    if DBG_NOTABLE_TILES:
+        dbg_units = ["units by distance:"]
+        for unit in units_by_dist:
+            dbg_units.append("{}{}: {:.0f} from enemy hq [{},{}]: {}".format(
+                "moved " if str(unit['moved'])=='1' else "", tilestr(unit),
+                dist_from_enemy_hq(unit), OTHER_HQ[0]['x'], OTHER_HQ[0]['y'],
+                tile_details_str(unit, ['moved'])))
+        APP.logger.debug("\n".join(dbg_units))
     return units_by_dist
 
 def msec(timedelta):
@@ -436,15 +480,7 @@ def choose_move(player_id, army_id, game_info, players):
     dbg_force_tile = game_info.get('dbg_force_tile', '')   # x,y padded with zeroes, e.g. 04,14
     #todo: dbg_force_action = game_info.get('dbg_force_action', '')
 
-    # for each unit ordered by nearest to the enemy HQ
-    # - if castle can be captured, capture it
-    # - if village can be captured, capture it
-    # - if enemy can be attacked, attack it
-    # - else move randomly
-    # for each castle, order by nearest to the enemy flag:
-    # - create the strongest unit we can given remaining funds
-
-    # TODO: what to move?  for now, lemmings to the slaughter
+    # move random unit
     dbg_nbrs = []
     if dbg_force_tile != '':
         APP.logger.debug("dbg_force_tile: {}".format(dbg_force_tile))
@@ -465,20 +501,23 @@ def choose_move(player_id, army_id, game_info, players):
             return mkres(move=move)
 
         # randomly choose a direction to walk
-        # TODO: Unicorn moves 6 when loaded
-        unit['seen'] = 1
-        unit['path'] = []
         for tile in TILES_BY_IDX.values():
-            tile['seen'] = 0
-            tile['path'] = None
+            tile['seen'], tile['path'] = 0, None
+        unit['seen'], unit['path'] = 1, []
         unit_max_move = unit['unit_type']['move']
         # not moving is a valid choice
         move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'] }
-        neighbors = unit_neighbors(unit, army_id, unit, unit_max_move, unit, [])
-        neighbors.append(unit)  # i.e. don't move!
+        neighbors = walkable_tiles(unit, army_id, unit, unit_max_move, [])
         # we included neighbors with 'our' units on them, but those can't be destinations...
         neighbors = [nbr for nbr in neighbors if nbr['unit_army_id'] is None]
-        dest = random.choice(neighbors)
+        neighbors.append(unit)  # i.e. don't move!
+        uniq_neighbors = {}
+        for nbr in neighbors:
+            nbr['pathstr'] = pathstr([nbr]+nbr['path'])
+            if nbr['pathstr'] not in uniq_neighbors:
+                uniq_neighbors[nbr['pathstr']] = nbr
+        uniq_neighbors_list = list(uniq_neighbors.values())
+        dest = random.choice(uniq_neighbors_list)
         if dest['xy'] == unit['xy']:
             dbg_nbrs.append("no walkable neighbors for {}, move={}:".format(
                 tilestr(unit), unit_max_move))
@@ -488,16 +527,19 @@ def choose_move(player_id, army_id, game_info, players):
             dest['path'].append(dest)
             move.update(
                 { '__unit_name': unit_type, '__unit_action': 'simple_movement',
+                  '__unit_max_move': unit_max_move,
                   'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'],
+                                   '__walkcost': walk_cost(unit_type, p['terrain_name']),
                                    '__terrain': p['terrain_name'] }
                                  for p in dest['path']] })
             dbg_nbrs.append("walkable neighbors of {}, move={}:".format(
                 tilestr(unit), unit_max_move))
-            for nbr in sorted(neighbors, key=lambda r: r['xystr']):
+            for nbr in sorted_tiles(uniq_neighbors_list):
                 dbg_nbrs.append("{} {} via {}".format(
                     "=>" if dest['xy']==nbr['xy'] else " -",
                     tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
-        APP.logger.debug("\n".join(dbg_nbrs))
+        if DBG_MOVEMENT:
+            APP.logger.debug("\n".join(dbg_nbrs))
 
         # usually capture open towns, castles and headquarters
         if can_capture(dest, unit, army_id) and random.random() < 0.90:
@@ -509,14 +551,17 @@ def choose_move(player_id, army_id, game_info, players):
             attackmin, attackmax = unit['unit_type']['attackmin'], unit['unit_type']['attackmax']
             attack_neighbors = [enemy_unit for enemy_unit in ENEMY_UNITS
                                 if attackmin <= dist(attack_tile, enemy_unit) <= attackmax]
-            dbgmsgs = [ "enemy units from {}".format(tilestr(attack_tile)) ]
-            dbgmsgs.append("\n".join(["{}: {}".format(
-                dist(attack_tile, enemy_unit), tilestr(enemy_unit)) for enemy_unit in ENEMY_UNITS]))
-            dbgmsgs.append("attack_neighbors for {}: {}".format(
-                tilestr(dest), "\n".join([pathstr(tile['path']) for tile in attack_neighbors])))
+            if DBG_NOTABLE_TILES:
+                dbgmsgs = [ "enemy units from {}".format(tilestr(attack_tile)) ]
+                dbgmsgs.append("\n".join(["{}: {}".format(
+                    dist(attack_tile, enemy_unit), tilestr(enemy_unit))
+                                          for enemy_unit in ENEMY_UNITS]))
+                dbgmsgs.append("attack_neighbors for {}: {}".format(
+                    tilestr(dest), "\n".join([pathstr(tile['path']) for tile in attack_neighbors])))
             random.shuffle(attack_neighbors)
             for attack_neighbor in attack_neighbors:
-                dbgmsgs.append("- {}".format(tilestr(attack_neighbor, show_details=True)))
+                if DBG_NOTABLE_TILES:
+                    dbgmsgs.append("- {}".format(tilestr(attack_neighbor, show_details=True)))
                 if attack_neighbor.get('unit_army_id', '') not in ['', None, army_id] and \
                    random.random() <= 0.9:
                     dbgmsgs.append("attacking: {}".format(tilestr(attack_neighbor)))
@@ -529,19 +574,21 @@ def choose_move(player_id, army_id, game_info, players):
                     else:
                         move['__action'] = 'ground_attack'
                     break
-            APP.logger.debug("\n".join(dbgmsgs))
+            if DBG_NOTABLE_TILES:
+                APP.logger.debug("\n".join(dbgmsgs))
         return mkres(move=move)
     return build_new_units(my_info, dbg_force_tile)
 
 def build_new_units(my_info, dbg_force_tile):
     # build new units at castles
     my_castles_by_dist = sorted(MY_CASTLES, key=dist_from_enemy_hq)
-    dbg_castles = ["castles by distance:"]
-    for castle in my_castles_by_dist:
-        dbg_castles.append("{}: {:.1f} from enemy hq @{}".format(
-            tilestr(castle, show_details=True), dist_from_enemy_hq(castle),
-            tile2xystr(OTHER_HQ[0])))
-    APP.logger.debug("\n".join(dbg_castles))
+    if DBG_NOTABLE_TILES:
+        dbg_castles = ["castles by distance:"]
+        for castle in my_castles_by_dist:
+            dbg_castles.append("{}: {:.1f} from enemy hq @{}".format(
+                tilestr(castle, show_details=True), dist_from_enemy_hq(castle),
+                tile2xystr(OTHER_HQ[0])))
+        APP.logger.debug("\n".join(dbg_castles))
     funds = int(my_info['funds'])
     for castle in my_castles_by_dist:
         if dbg_force_tile not in ['', castle['xystr']]: continue
@@ -589,8 +636,8 @@ class BasicNextMove(Resource):
         else:
             player_id = str(request.form['botPlayerId'])
             game_info = json.loads(request.form['gameInfo'])
-        parse_time = datetime.datetime.now() - start_time
-        if DBG_PARSE_TIME:
+        if DBG_TIMING:
+            parse_time = datetime.datetime.now() - start_time
             APP.logger.debug('JSON parse time: {}'.format(msec(parse_time)))
 
         if DEBUG:
@@ -628,14 +675,19 @@ class BasicNextMove(Resource):
             game_fh.close()
 
         LAST_MOVES[game_id] = move
-            
+        if DBG_TIMING:
+            total_time = datetime.datetime.now() - start_time
+            APP.logger.debug('total response time: {}'.format(msec(total_time)))
         # compact response helps debugging
+        move['__tilemap'] = tilemap_list(tiles_list)
+        move['__movemap'] = movemap_list(tiles_list, army_id, move)
         if DEBUG:
             APP.logger.debug("move response: \n{}".format(compact_json_dumps(move)))
             response = make_response(compact_json_dumps(move))
             response.headers['content-type'] = 'application/json'
-            return response
-        return move
+        else:
+            response = move
+        return response
 
 API.add_resource(Heartbeat, '/meatshields/bot/getHeartbeat')
 API.add_resource(BasicNextMove, '/meatshields/bot/getNextMove')
