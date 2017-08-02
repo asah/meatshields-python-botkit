@@ -203,9 +203,6 @@ def walk_cost(unit_type, terrain):
     elif unit_type in ['Mount', 'Brimstone', 'Thunderstorm']:
         if terrain in ['Plains','Forest']: return 2
         elif terrain in NORMAL_TERRAIN: return 1
-    elif unit_type == 'Mount':
-        if terrain in ['Plains','Forest']: return 2
-        elif terrain in NORMAL_TERRAIN: return 1
     else:
         if terrain == 'Forest': return 2
         elif terrain in NORMAL_TERRAIN: return 1
