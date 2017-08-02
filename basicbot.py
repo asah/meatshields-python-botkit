@@ -564,7 +564,8 @@ def choose_move(player_id, army_id, game_info, players):
                     dbgmsgs.append("- {}".format(tilestr(attack_neighbor, show_details=True)))
                 if attack_neighbor.get('unit_army_id', '') not in ['', None, army_id] and \
                    random.random() <= 0.9:
-                    dbgmsgs.append("attacking: {}".format(tilestr(attack_neighbor)))
+                    if DBG_NOTABLE_TILES:
+                        dbgmsgs.append("attacking: {}".format(tilestr(attack_neighbor)))
                     move['x_coord_attack'] = attack_neighbor['x']
                     move['y_coord_attack'] = attack_neighbor['y']
                     # missile units: don't move, just attack
