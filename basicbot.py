@@ -19,10 +19,10 @@ from flask_restful import Resource, Api
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
-DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
-DBG_TIMING = (os.environ.get('DBG_TIMING', '1') == '1')
+DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '1') == '1')
+DBG_TIMING = (os.environ.get('DBG_TIMING', '0') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
-DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
+DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '1') == '1')
 
 APP = Flask(__name__)
 API = Api(APP)
@@ -486,6 +486,11 @@ def choose_move(player_id, army_id, game_info, players):
         if dbg_force_tile not in ['', unit['xystr']]: continue
         unit_type = unit['unit_name']
 
+        # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
+        # all in one turn
+# asah         if unit_type == 'Unicorn' and  asah
+            
+        
         # don't move, just capture.
         # note dumb alg, e.g. unit with tiny health will still try...
         if unit['capture_remaining'] not in [None, ""] and \
