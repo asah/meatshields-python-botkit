@@ -8,6 +8,7 @@
 # - Unicorn loading & unloading
 # - Unicorn moves 6 when loaded
 # - healing
+# - join
 # - multiple enemies
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
@@ -19,10 +20,11 @@ from flask_restful import Resource, Api
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
-DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '1') == '1')
+DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
 DBG_TIMING = (os.environ.get('DBG_TIMING', '0') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '1') == '1')
+DBG_MOVES = (os.environ.get('DBG_MOVES', '1') == '1')
 
 APP = Flask(__name__)
 API = Api(APP)
@@ -83,7 +85,7 @@ UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H', 'Mage': 'E' })
 UPPER_SHORTCODES_UNIT = dict([(tval,tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 
-CAPTURING_UNITS = set('Knight Archer Ninja'.split())
+LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja'.split())
 ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['attackmin'] > 0])
 MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['attackmin'] > 1])
 
@@ -470,14 +472,26 @@ def my_units_by_dist():
 def msec(timedelta):
     return timedelta.seconds*1000 + int(timedelta.microseconds/1000)
 
-def choose_move(player_id, army_id, game_info, players):
+def cache_move(res, moves):
+    res_hash = json.dumps(res)
+    if res_hash in moves:
+        return False
+    moves[res_hash] = res
+    return True
+
+def copy_move(move, update):
+    new_move = copy.deepcopy(move)
+    new_move.update(update)
+    return new_move
+
+def enumerate_moves(player_id, army_id, game_info, players, moves):
     my_info = players[player_id]
     # debug hack to force the algorithm to 'pick' this tile for the move,
     # building units at a castle, moving a unit, etc.
     dbg_force_tile = game_info.get('dbg_force_tile', '')   # x,y padded with zeroes, e.g. 04,14
     #todo: dbg_force_action = game_info.get('dbg_force_action', '')
 
-    # move random unit
+    # unit movement, incl unicorn loading/unloading
     dbg_nbrs = []
     if dbg_force_tile != '':
         APP.logger.debug("dbg_force_tile: {}".format(dbg_force_tile))
@@ -488,101 +502,123 @@ def choose_move(player_id, army_id, game_info, players):
 
         # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
         # all in one turn
-# asah         if unit_type == 'Unicorn' and  asah
-            
-        
-        # don't move, just capture.
-        # note dumb alg, e.g. unit with tiny health will still try...
-        if unit['capture_remaining'] not in [None, ""] and \
-           int(unit['capture_remaining']) > 0 and \
-           can_capture(unit, unit, army_id) and \
-           random.random() < 0.90:
-            move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],
-                     '__unit_name': unit_type, '__unit_action': 'capture',
-                     'movements': [], 'unit_action': 'capture' }
-            return mkres(move=move)
+        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name','') != '':
+            valid_neighbors = [nbr for nbr in xyneighbors(unit) if
+                               nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
+            APP.logger.debug('loaded unicorn found: {}  -- neighbors:\n{}'.format(
+                tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
+            for nbr in valid_neighbors:
+                move = {
+                    'x_coordinate': nbr['x_coordinate'], 'y_coordinate': nbr['y_coordinate'],
+                    '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
+                    'movements': [], 'unit_action': 'unloadSlot1' }
+                if cache_move(mkres(move=move), moves): return mkres(move=move)
 
-        # randomly choose a direction to walk
+        # decide on unicorn (re)loading next -- possible unload/reload/move/unload all in one turn
+        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '')=='':
+            loadable_units = [nbr for nbr in MY_UNITS if
+                              nbr['unit_name'] in LOADABLE_UNITS and
+                              nbr['moved'] == '0' and
+                              unit['xystr'] in [nbr['xystr'] for nbr in walkable_tiles(
+                                  nbr, army_id, nbr, nbr['unit_type']['move'], [])]]
+            APP.logger.debug('unloaded unicorn found: {}  -- neighbors:\n{}'.format(
+                tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
+            for nbr in loadable_units:
+                move = { 'x_coordinate': nbr['x_coordinate'], 'y_coordinate': nbr['y_coordinate'],
+                         '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'load',
+                         'unit_action': 'load', 'movements': [ {
+                             "xCoordinate": p['x'], "yCoordinate": p['y'],
+                             '__walkcost': walk_cost(unit_type, p['terrain_name']),
+                             '__terrain': p['terrain_name'] } for p in nbr['path']] }
+                if cache_move(mkres(move=move), moves): return mkres(move=move)
+
+        # moves
         for tile in TILES_BY_IDX.values():
             tile['seen'], tile['path'] = 0, None
         unit['seen'], unit['path'] = 1, []
         unit_max_move = unit['unit_type']['move']
-        # not moving is a valid choice
-        move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'] }
+        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '')!='':
+            unit_max_move = 6
         neighbors = walkable_tiles(unit, army_id, unit, unit_max_move, [])
         # we included neighbors with 'our' units on them, but those can't be destinations...
         neighbors = [nbr for nbr in neighbors if nbr['unit_army_id'] is None]
-        neighbors.append(unit)  # i.e. don't move!
+        # not moving is a valid choice
+        neighbors.append(unit)
         uniq_neighbors = {}
         for nbr in neighbors:
             nbr['pathstr'] = pathstr([nbr]+nbr['path'])
             if nbr['pathstr'] not in uniq_neighbors:
                 uniq_neighbors[nbr['pathstr']] = nbr
         uniq_neighbors_list = list(uniq_neighbors.values())
-        dest = random.choice(uniq_neighbors_list)
-        if dest['xy'] == unit['xy']:
-            dbg_nbrs.append("no walkable neighbors for {}, move={}:".format(
-                tilestr(unit), unit_max_move))
-            move.update(
-                { '__unit_name': unit_type, '__unit_action': 'no_movement', 'movements': [] })
-        else:
-            dest['path'].append(dest)
-            move.update(
-                { '__unit_name': unit_type, '__unit_action': 'simple_movement',
-                  '__unit_max_move': unit_max_move,
-                  'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'],
-                                   '__walkcost': walk_cost(unit_type, p['terrain_name']),
-                                   '__terrain': p['terrain_name'] }
-                                 for p in dest['path']] })
-            dbg_nbrs.append("walkable neighbors of {}, move={}:".format(
-                tilestr(unit), unit_max_move))
-            for nbr in sorted_tiles(uniq_neighbors_list):
-                dbg_nbrs.append("{} {} via {}".format(
-                    "=>" if dest['xy']==nbr['xy'] else " -",
-                    tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
-        if DBG_MOVEMENT:
-            APP.logger.debug("\n".join(dbg_nbrs))
+        for dest in uniq_neighbors_list:
+            move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'] }
+            if dest['xy'] == unit['xy']:
+                dbg_nbrs.append("no walkable neighbors for {}, move={}:".format(
+                    tilestr(unit), unit_max_move))
+                move.update(
+                    { '__unit_name': unit_type, '__unit_action': 'no_movement', 'movements': [] })
+            else:
+                move.update(
+                    { '__unit_name': unit_type, '__unit_action': 'simple_movement',
+                      '__unit_max_move': unit_max_move,
+                      'movements': [ { "xCoordinate": p['x'], "yCoordinate": p['y'],
+                                       '__walkcost': walk_cost(unit_type, p['terrain_name']),
+                                       '__terrain': p['terrain_name'] }
+                                     for p in (dest['path'] + [dest])] })
+                dbg_nbrs.append("walkable neighbors of {}, move={}:".format(
+                    tilestr(unit), unit_max_move))
+                for nbr in sorted_tiles(uniq_neighbors_list):
+                    dbg_nbrs.append("{} {} via {}".format(
+                        "=>" if dest['xy']==nbr['xy'] else " -",
+                        tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
+            if DBG_MOVEMENT:
+                APP.logger.debug("\n".join(dbg_nbrs))
+            
+            # capture open towns, castles and headquarters
+            if (can_capture(dest, unit, army_id) and
+                unit['capture_remaining'] not in [None, ""] and
+                int(unit['capture_remaining']) > 0):
+                capture_move = copy_move(move, {'unit_action': 'capture', '__action': 'capture'})
+                if cache_move(capture_move, moves): return mkres(move=capture_move)
 
-        # usually capture open towns, castles and headquarters
-        if can_capture(dest, unit, army_id) and random.random() < 0.90:
-            move["unit_action"] = "capture"            
-            move['__action'] = 'capture' # harmless - for easier development
-        elif unit_type in ATTACKING_UNITS:
-            # missile units: don't move, just attack
-            attack_tile = unit if unit_type in MISSILE_UNITS else dest
-            attackmin, attackmax = unit['unit_type']['attackmin'], unit['unit_type']['attackmax']
-            attack_neighbors = [enemy_unit for enemy_unit in ENEMY_UNITS
-                                if attackmin <= dist(attack_tile, enemy_unit) <= attackmax]
-            if DBG_NOTABLE_TILES:
-                dbgmsgs = [ "enemy units from {}".format(tilestr(attack_tile)) ]
-                dbgmsgs.append("\n".join(["{}: {}".format(
-                    dist(attack_tile, enemy_unit), tilestr(enemy_unit))
-                                          for enemy_unit in ENEMY_UNITS]))
-                dbgmsgs.append("attack_neighbors for {}: {}".format(
-                    tilestr(dest), "\n".join([pathstr(tile['path']) for tile in attack_neighbors])))
-            random.shuffle(attack_neighbors)
-            for attack_neighbor in attack_neighbors:
+            # attacks
+            if unit_type in ATTACKING_UNITS:
+                # missile units: don't move, just attack
+                attack_tile = unit if unit_type in MISSILE_UNITS else dest
+                attackmin = unit['unit_type']['attackmin']
+                attackmax = unit['unit_type']['attackmax']
+                attack_neighbors = [enemy_unit for enemy_unit in ENEMY_UNITS
+                                    if attackmin <= dist(attack_tile, enemy_unit) <= attackmax]
                 if DBG_NOTABLE_TILES:
-                    dbgmsgs.append("- {}".format(tilestr(attack_neighbor, show_details=True)))
-                if attack_neighbor.get('unit_army_id', '') not in ['', None, army_id] and \
-                   random.random() <= 0.9:
+                    dbgmsgs = [ "enemy units from {}".format(tilestr(attack_tile)) ]
+                    dbgmsgs.append("\n".join(["{}: {}".format(
+                        dist(attack_tile, enemy_unit), tilestr(enemy_unit))
+                                              for enemy_unit in ENEMY_UNITS]))
+                    dbgmsgs.append("attack_neighbors for {}: {}".format(
+                        tilestr(dest), "\n".join([pathstr(tile['path'])
+                                                  for tile in attack_neighbors])))
+                for attack_neighbor in attack_neighbors:
                     if DBG_NOTABLE_TILES:
-                        dbgmsgs.append("attacking: {}".format(tilestr(attack_neighbor)))
-                    move['x_coord_attack'] = attack_neighbor['x']
-                    move['y_coord_attack'] = attack_neighbor['y']
-                    # missile units: don't move, just attack
-                    if unit_type in MISSILE_UNITS:
-                        move['movements'] = []
-                        move['__action'] = 'missile_attack'
-                    else:
-                        move['__action'] = 'ground_attack'
-                    break
-            if DBG_NOTABLE_TILES:
-                APP.logger.debug("\n".join(dbgmsgs))
-        return mkres(move=move)
-    return build_new_units(my_info, dbg_force_tile)
+                        dbgmsgs.append("- {}".format(tilestr(attack_neighbor, show_details=True)))
+                    if attack_neighbor.get('unit_army_id', '') not in ['', None, army_id]:
+                        if DBG_NOTABLE_TILES:
+                            dbgmsgs.append("attacking: {}".format(tilestr(attack_neighbor)))
+                        # missile units: don't move, just attack
+                        attack_move = copy_move(move, {
+                            'x_coord_attack': attack_neighbor['x'],
+                            'y_coord_attack': attack_neighbor['y'] })
+                        if unit_type in MISSILE_UNITS:
+                            attack_move.update({ '__action': 'missile_attack', 'movements': [] })
+                        else:
+                            attack_move.update({ '__action': 'ground_attack' })
+                        if cache_move(mkres(move=attack_move), moves):
+                            if DBG_NOTABLE_TILES:
+                                APP.logger.debug("\n".join(dbgmsgs))
+                            return mkres(move=attack_move)
+            # simple moves
+            if cache_move(mkres(move=move), moves):
+                return mkres(move=move)
 
-def build_new_units(my_info, dbg_force_tile):
     # build new units at castles
     my_castles_by_dist = sorted(MY_CASTLES, key=dist_from_enemy_hq)
     if DBG_NOTABLE_TILES:
@@ -597,12 +633,23 @@ def build_new_units(my_info, dbg_force_tile):
         if dbg_force_tile not in ['', castle['xystr']]: continue
         if castle['unit_army_id'] is None and funds >= 1000:
             unit_types = [k for k,v in UNIT_TYPES.items() if v['cost'] <= funds]
-            # randomly choose the unit type
-            newunit = random.choice(unit_types)
-            return mkres(purchase = {
-                'x_coordinate': castle['x_coordinate'], 'y_coordinate': castle['y_coordinate'],
-                'unit_name': newunit})
-    return mkres(end_turn=True)
+            for newunit in unit_types:
+                res = mkres(purchase = {
+                    'x_coordinate': castle['x_coordinate'], 'y_coordinate': castle['y_coordinate'],
+                    'unit_name': newunit})
+                if cache_move(res, moves): return res
+
+    # run out of possible moves
+    if cache_move(mkres(end_turn=True), moves): return mkres(end_turn=True)
+    return None
+
+def abbr_move_json(move):
+    res = json.dumps(move)
+    res = res.replace('{"status": "success", "data": {', '')
+    res = res.replace(', "status": "success"}', '')
+    res = re.sub(r'(, |{)"(purchase|end_turn|move)": false', '', res)
+    res = re.sub(r'{?"(data|move)":[ {,]+', '', res)
+    return res
 
 def compressed_tile(tile):
     return dict( (fld,val) for fld,val in tile.items() if val is not None and
@@ -664,10 +711,22 @@ class BasicNextMove(Resource):
         if is_first_move_in_turn(game_info['game_id']):
             APP.logger.debug("tilemap:\n" + tilemap_json(tiles_list))
             APP.logger.debug("unitmap:\n" + unitmap_json(tiles_list, army_id))
-        move = choose_move(player_id, army_id, game_info, players)
-        if move['data']['end_turn']:
+        moves = {}
+        while True:
+            next_move = enumerate_moves(player_id, army_id, game_info, players, moves)
+            if next_move is None:
+                break
+        mvkey = random.choice(list(moves.keys()))
+        if DBG_MOVES:
+            APP.logger.debug("{} moves available:\n{}".format(
+                len(moves), "\n".join(["{}{}".format(
+                    ("=> " if mvkey == key else ""),
+                    abbr_move_json(moves[key])) for key in sorted(
+                        moves.keys(), key=lambda mv: json.dumps(moves[mv]))])))
+        if len(moves) == 1:
             APP.logger.debug("tilemap:\n" + tilemap_json(tiles_list))
             APP.logger.debug("unitmap:\n" + unitmap_json(tiles_list, army_id))
+        move = moves[mvkey]
 
         # save the game, for debugging
         if DEBUG:
