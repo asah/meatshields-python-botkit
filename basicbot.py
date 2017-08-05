@@ -5,10 +5,7 @@
 # basicbot.py
 #
 # TODO list:
-# - Unicorn loading & unloading
-# - Unicorn moves 6 when loaded
-# - healing
-# - join
+# - damage, healing, joining
 # - multiple enemies
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
