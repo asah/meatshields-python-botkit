@@ -1,6 +1,6 @@
 { "botPlayerId": 1529, "gameInfo": { "current_turn": "2",
   "day": "12",
-  "dbg_force_tile": "11,01",
+  "dbg_force_tile": "11,1",
   "fog": "1",
   "game_id": "6873",
   "map_name": "2p_Shortcut",

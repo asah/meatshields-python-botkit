@@ -14,6 +14,7 @@
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
 import random, re, os, copy, datetime
+from multiprocessing import Process, SimpleQueue
 from flask import Flask, request, json, make_response
 from flask_restful import Resource, Api
 
@@ -21,10 +22,13 @@ DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
 DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
-DBG_TIMING = (os.environ.get('DBG_TIMING', '0') == '1')
+DBG_TIMING = (os.environ.get('DBG_TIMING', '1') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
-DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '1') == '1')
-DBG_MOVES = (os.environ.get('DBG_MOVES', '1') == '1')
+DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
+DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
+DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
+
+PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '1') == '1')
 
 APP = Flask(__name__)
 API = Api(APP)
@@ -32,6 +36,8 @@ API = Api(APP)
 # remember turns and moves between API calls - helps debugging
 GAMES = {}
 LAST_MOVES = {}
+
+DBGPRINT = APP.logger.debug
 
 @APP.before_request
 def set_random_seed():
@@ -220,7 +226,7 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
     tile['path'] = path   # path to get to this tile
     dest_tiles = [tile]
     if DBG_MOVEMENT:
-        APP.logger.debug(('walkable_tiles(tile={}, unit_tile={}, walkcost={}, '+
+        DBGPRINT(('walkable_tiles(tile={}, unit_tile={}, walkcost={}, '+
                           'cost_remaining={}, path={}, typ={}, terr={}'
         ).format(tilestr(tile), tilestr(unit_tile), walkcost, cost_remaining,
                  pathstr(path), unit_type, terrain))
@@ -230,7 +236,7 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
                            # walk over friends but not enemies
                            nbr['unit_army_id'] in [None, army_id]]
     if DBG_MOVEMENT:
-        APP.logger.debug('immediate neighbors of {}: {}, path:{}, moves left:{}'.format(
+        DBGPRINT('immediate neighbors of {}: {}, path:{}, moves left:{}'.format(
             tilestr(tile), pathstr(immediate_neighbors), pathstr(path),
             cost_remaining - walkcost))
     newpath = path + ([] if tile['xy'] == unit_tile['xy'] else [tile])
@@ -245,9 +251,9 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
             dest_tiles.append(nbr)
             msgs.append('{}: {}'.format(tilestr(nbr), pathstr(nbr['path'])))
         if DBG_MOVEMENT:
-            APP.logger.debug('\n'.join(msgs))
+            DBGPRINT('\n'.join(msgs))
     if DBG_MOVEMENT:
-        APP.logger.debug('dest_tiles: {}'.format(";".join([tilestr(til) for til in dest_tiles])))
+        DBGPRINT('dest_tiles: {}'.format(";".join([tilestr(til) for til in dest_tiles])))
     return dest_tiles
 
 def dist(unit, tile):
@@ -283,7 +289,7 @@ def compact_tile_in_place_json(tiles):
         for tile in tile_ar:
             compact_tile_in_place(tile)
     res = json.dumps(new_tiles)
-    APP.logger.debug(res)
+    DBGPRINT(res)
     return res
 
 def unitmap(tiles_list, army_id):
@@ -295,7 +301,7 @@ def unitmap(tiles_list, army_id):
     text_map = [ [""] * (len_x+1) for _ in range(len_y+1)]
     for tile in tiles_list:
         xpos, ypos = tile['x'], tile['y']
-        #APP.logger.debug(tile)
+        #DBGPRINT(tile)
         if tile.get('unit_name') is not None:
             mapchar = UNIT_SHORTCODES[tile['unit_name']]
             text_map[ypos][xpos] = (mapchar.upper() if tile['unit_army_id'] == army_id
@@ -405,7 +411,7 @@ def parse_map(army_id, tiles, game_info):
                 tile['tile_id'] = next_tile_id
                 next_tile_id += 1
                 TILES_BY_IDX[tile['xyidx']] = tile
-                #APP.logger.debug('{}: {}'.format(tile['xy'], tile))
+                #DBGPRINT('{}: {}'.format(tile['xy'], tile))
     # old style, including army details
     for tile_ar in tiles:
         for tile in tile_ar:
@@ -439,7 +445,7 @@ def parse_map(army_id, tiles, game_info):
             town_list = MY_TOWNS if is_my_building(tile, army_id) else OTHER_TOWNS
             town_list.append(tile)
     if DBG_NOTABLE_TILES:
-        APP.logger.debug("notable_tiles:  my army_id={}\n{}".format(
+        DBGPRINT("notable_tiles:  my army_id={}\n{}".format(
             army_id, "\n".join([tilestr(tile, show_details=True)
                                 for tile in sorted_tiles(notable_tiles)])))
 
@@ -466,7 +472,7 @@ def my_units_by_dist():
                 "moved " if str(unit['moved'])=='1' else "", tilestr(unit),
                 dist_from_enemy_hq(unit), OTHER_HQ[0]['x'], OTHER_HQ[0]['y'],
                 tile_details_str(unit, ['moved'])))
-        APP.logger.debug("\n".join(dbg_units))
+        DBGPRINT("\n".join(dbg_units))
     return units_by_dist
 
 def msec(timedelta):
@@ -493,11 +499,9 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
 
     # unit movement, incl unicorn loading/unloading
     dbg_nbrs = []
-    if dbg_force_tile != '':
-        APP.logger.debug("dbg_force_tile: {}".format(dbg_force_tile))
     for unit in my_units_by_dist():
         if str(unit['moved'])=='1': continue
-        if dbg_force_tile not in ['', unit['xystr']]: continue
+        if dbg_force_tile not in ['', unit['xy']]: continue
         unit_type = unit['unit_name']
 
         # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
@@ -505,7 +509,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name','') != '':
             valid_neighbors = [nbr for nbr in xyneighbors(unit) if
                                nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
-            APP.logger.debug('loaded unicorn found: {}  -- neighbors:\n{}'.format(
+            if DBG_MOVES: DBGPRINT('loaded unicorn found: {}  -- neighbors:\n{}'.format(
                 tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
             for nbr in valid_neighbors:
                 move = {
@@ -521,7 +525,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                               nbr['moved'] == '0' and
                               unit['xystr'] in [nbr['xystr'] for nbr in walkable_tiles(
                                   nbr, army_id, nbr, nbr['unit_type']['move'], [])]]
-            APP.logger.debug('unloaded unicorn found: {}  -- neighbors:\n{}'.format(
+            if DBG_MOVES: DBGPRINT('unloaded unicorn found: {}  -- neighbors:\n{}'.format(
                 tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
             for nbr in loadable_units:
                 move = { 'x_coordinate': nbr['x_coordinate'], 'y_coordinate': nbr['y_coordinate'],
@@ -572,7 +576,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                         "=>" if dest['xy']==nbr['xy'] else " -",
                         tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
             if DBG_MOVEMENT:
-                APP.logger.debug("\n".join(dbg_nbrs))
+                DBGPRINT("\n".join(dbg_nbrs))
             
             # capture open towns, castles and headquarters
             if (can_capture(dest, unit, army_id) and
@@ -613,7 +617,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                             attack_move.update({ '__action': 'ground_attack' })
                         if cache_move(mkres(move=attack_move), moves):
                             if DBG_NOTABLE_TILES:
-                                APP.logger.debug("\n".join(dbgmsgs))
+                                DBGPRINT("\n".join(dbgmsgs))
                             return mkres(move=attack_move)
             # simple moves
             if cache_move(mkres(move=move), moves):
@@ -627,10 +631,10 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
             dbg_castles.append("{}: {:.1f} from enemy hq @{}".format(
                 tilestr(castle, show_details=True), dist_from_enemy_hq(castle),
                 tile2xystr(OTHER_HQ[0])))
-        APP.logger.debug("\n".join(dbg_castles))
+        DBGPRINT("\n".join(dbg_castles))
     funds = int(my_info['funds'])
     for castle in my_castles_by_dist:
-        if dbg_force_tile not in ['', castle['xystr']]: continue
+        if dbg_force_tile not in ['', castle['xy']]: continue
         if castle['unit_army_id'] is None and funds >= 1000:
             unit_types = [k for k,v in UNIT_TYPES.items() if v['cost'] <= funds]
             for newunit in unit_types:
@@ -642,6 +646,21 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     # run out of possible moves
     if cache_move(mkres(end_turn=True), moves): return mkres(end_turn=True)
     return None
+
+def enumerate_all_moves(player_id, army_id, game_info, players, result_queue=None):
+    #DBGPRINT("enumerate_all_moves({}, {}, {}, {}, {})\n\nTILES_BY_IDX: {}".format(
+    #    player_id, army_id, game_info, players, result_queue, len(TILES_BY_IDX))
+    next_move, moves = True, {}
+    dbg_force_tile = game_info.get('dbg_force_tile', '')
+    if DBG_MOVES and dbg_force_tile != '':
+        DBGPRINT("dbg_force_tile: {}".format(dbg_force_tile))
+    while next_move is not None:
+        next_move = enumerate_moves(player_id, army_id, game_info, players, moves)
+        if next_move is not None and result_queue:
+            #DBGPRINT('next_move: {}'.format(next_move))
+            result_queue.put(next_move)
+    if result_queue is None:
+        return moves
 
 def abbr_move_json(move):
     res = json.dumps(move)
@@ -674,9 +693,9 @@ def compressed_game_info(game_info, army_id):
 class BasicNextMove(Resource):
     def post(self):
         if DBG_PRINT_SHORTCODES:
-            APP.logger.debug("\n".join(["{}: {}".format(name, typ) for name, typ in
+            DBGPRINT("\n".join(["{}: {}".format(name, typ) for name, typ in
                                         sorted(TERRAIN_SHORTCODES.items())]))
-            APP.logger.debug("\n".join(["{}: {}".format(name, typ) for name, typ in
+            DBGPRINT("\n".join(["{}: {}".format(name, typ) for name, typ in
                                         sorted(UNIT_SHORTCODES.items())]))
         start_time = datetime.datetime.now()
         if request.data:
@@ -688,7 +707,7 @@ class BasicNextMove(Resource):
             game_info = json.loads(request.form['gameInfo'])
         if DBG_TIMING:
             parse_time = datetime.datetime.now() - start_time
-            APP.logger.debug('JSON parse time: {}'.format(msec(parse_time)))
+            DBGPRINT('JSON parse time: {}'.format(msec(parse_time)))
 
         if DEBUG:
             game_id = game_info['game_id']
@@ -709,23 +728,37 @@ class BasicNextMove(Resource):
         parse_map(army_id, tiles, game_info)
         tiles_list = TILES_BY_IDX.values()
         if is_first_move_in_turn(game_info['game_id']):
-            APP.logger.debug("tilemap:\n" + tilemap_json(tiles_list))
-            APP.logger.debug("unitmap:\n" + unitmap_json(tiles_list, army_id))
-        moves = {}
-        while True:
-            next_move = enumerate_moves(player_id, army_id, game_info, players, moves)
-            if next_move is None:
-                break
+            DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
+            DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
+
+        if PARALLEL_MOVE_DISCOVERY:
+            moves, workers, result_queue = {}, [], SimpleQueue()
+            # dbg_force_tile also signals a child process, i.e. avoid infinite recursion
+            for unit in (MY_UNITS + MY_CASTLES):
+                #DBGPRINT("opening subprocess for unit: {}".format(tilestr(unit)))
+                game_info['dbg_force_tile'] = unit['xy']
+                worker = Process(target=enumerate_all_moves, args=(
+                    player_id, army_id, game_info, players, result_queue, ))
+                workers.append(worker)
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=7)
+            while not result_queue.empty():
+                cache_move(result_queue.get(), moves)                
+        else:
+            moves = enumerate_all_moves(player_id, army_id, game_info, players)
+
+        if DBG_STATS: DBGPRINT("{} moves available.".format(len(moves)))
         mvkey = random.choice(list(moves.keys()))
         if DBG_MOVES:
-            APP.logger.debug("{} moves available:\n{}".format(
+            DBGPRINT("{} moves available:\n{}".format(
                 len(moves), "\n".join(["{}{}".format(
                     ("=> " if mvkey == key else ""),
                     abbr_move_json(moves[key])) for key in sorted(
                         moves.keys(), key=lambda mv: json.dumps(moves[mv]))])))
         if len(moves) == 1:
-            APP.logger.debug("tilemap:\n" + tilemap_json(tiles_list))
-            APP.logger.debug("unitmap:\n" + unitmap_json(tiles_list, army_id))
+            DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
+            DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
         move = moves[mvkey]
 
         # save the game, for debugging
@@ -737,14 +770,16 @@ class BasicNextMove(Resource):
             game_fh.close()
 
         LAST_MOVES[game_id] = move
+        total_time = datetime.datetime.now() - start_time
         if DBG_TIMING:
-            total_time = datetime.datetime.now() - start_time
-            APP.logger.debug('total response time: {}'.format(msec(total_time)))
+            DBGPRINT('total response time: {}'.format(msec(total_time)))
         # compact response helps debugging
-        move['__tilemap'] = tilemap_list(tiles_list)
-        move['__movemap'] = movemap_list(tiles_list, army_id, move)
+        move['__maps'] = { 'move': movemap_list(tiles_list, army_id, move),
+                           'tile': tilemap_list(tiles_list) }
+        move['__stats'] = { 'possible_moves': len(moves),
+                            'response_msec': msec(total_time) }
         if DEBUG:
-            APP.logger.debug("move response: \n{}".format(compact_json_dumps(move)))
+            DBGPRINT("move response: \n{}".format(compact_json_dumps(move)))
             response = make_response(compact_json_dumps(move))
             response.headers['content-type'] = 'application/json'
         else:
