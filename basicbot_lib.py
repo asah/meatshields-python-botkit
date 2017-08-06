@@ -29,7 +29,7 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 # set to relatively high, so AI can uncover clever strategies
 MAX_JOIN_THRESHOLD = int(os.environ.get('DBG_STATS', '150'))
 
-PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '1') == '1')
+PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
 APP = API = None
 
@@ -66,19 +66,18 @@ UPPER_SHORTCODES_TERRAIN = dict([(tval,tkey) for tkey,tval in TERRAIN_SHORTCODES
 LOWER_SHORTCODES_TERRAIN = dict([(tval.lower(),tkey) for tkey,tval in TERRAIN_SHORTCODES.items()])
 
 UNIT_TYPES = {
-    'Knight':       { 'cost':  1000, 'move': 3, 'attackmin': 1, 'attackmax': 1 },
-    'Unicorn':      { 'cost':  1000, 'move': 4, 'attackmin': 0, 'attackmax': 0 },
-    'Archer':       { 'cost':  2000, 'move': 2, 'attackmin': 2, 'attackmax': 3 },
-    'Ninja':        { 'cost':  3000, 'move': 2, 'attackmin': 1, 'attackmax': 1 },
-    # mounts are doubled for easier integer math
-    'Mount':        { 'cost':  4000, 'move': 8, 'attackmin': 1, 'attackmax': 1 },
-    'Boulder':      { 'cost':  6000, 'move': 5, 'attackmin': 2, 'attackmax': 3 },
-    'Mage':         { 'cost':  6000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
-    'Centaur':      { 'cost':  7000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
-    'Brimstone':    { 'cost': 15000, 'move': 4, 'attackmin': 3, 'attackmax': 4 },
-    'Troll':        { 'cost': 16000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
-    'Giant':        { 'cost': 22000, 'move': 6, 'attackmin': 1, 'attackmax': 1 },
-    'Thunderstorm': { 'cost': 28000, 'move': 4, 'attackmin': 3, 'attackmax': 5 },
+    'Knight':       { 'cost':  1000, 'move': 3, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Unicorn':      { 'cost':  1000, 'move': 4, 'vision': 1, 'atkmin': 0, 'atkmax': 0 },
+    'Archer':       { 'cost':  2000, 'move': 2, 'vision': 2, 'atkmin': 2, 'atkmax': 3 },
+    'Ninja':        { 'cost':  3000, 'move': 2, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Mount':        { 'cost':  4000, 'move': 8, 'vision': 5, 'atkmin': 1, 'atkmax': 1 },
+    'Boulder':      { 'cost':  6000, 'move': 5, 'vision': 1, 'atkmin': 2, 'atkmax': 3 },
+    'Mage':         { 'cost':  6000, 'move': 6, 'vision': 3, 'atkmin': 1, 'atkmax': 1 },
+    'Centaur':      { 'cost':  7000, 'move': 6, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Brimstone':    { 'cost': 15000, 'move': 4, 'vision': 1, 'atkmin': 3, 'atkmax': 4 },
+    'Troll':        { 'cost': 16000, 'move': 6, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
+    'Giant':        { 'cost': 22000, 'move': 6, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
+    'Thunderstorm': { 'cost': 28000, 'move': 4, 'vision': 1, 'atkmin': 3, 'atkmax': 5 },
 }
 
 UNIT_SHORTCODES = dict([(tkey, tkey[0]) for tkey in UNIT_TYPES.keys()])
@@ -86,28 +85,31 @@ UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H', 'Mage': 'E' })
 UPPER_SHORTCODES_UNIT = dict([(tval,tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 
-DAMAGE_MATRIX = [
-    'Unicorn         1   1   1   1   1   1   1   1   1   1   1   1 ',
-    'Knight         14  55  65  12  45   5  15   5  25   1  30   1 ',
-    'Archer         40  45  55   7  20   4  15   5  35   4  45   4 ',
-    'Mount          65  80  85  55  75   6  65   4  75   1  85   1 ',
-    'Ninja          75  65  75  85  55  55  70  70  85  15  90  15 ',
-    'Centaur        75  75  80  85  70  55  70  65  85  15 100  15 ',
-    'Boulder        70  90  95  80  85  70  75  75  80  45  85  40 ',
-    'Mage          120 120 120  85 120  30  75  35  85  20  95  10 ',
-    'Brimstone      80  95 100  90  90  80  85  85  85  55  90  50 ',
-    'Troll         105 105 115 105  95  85 105 105 105  55 115  45 ',
-    'Thunderstorm  120 120 120 120 120  85 120  95 120  65 120  60 ',
-    'Giant         125 125 135 125 115 105 115 115 125  75 135  55 '
-]
+LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja'.split())
+ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 0])
+MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 1])
 
 DAMAGE_TBL = {}
 
 def setup_damage_table():
+    dmg_matrix = [
+        'Unicorn         1   1   1   1   1   1   1   1   1   1   1   1 ',
+        'Knight         14  55  65  12  45   5  15   5  25   1  30   1 ',
+        'Archer         40  45  55   7  20   4  15   5  35   4  45   4 ',
+        'Mount          65  80  85  55  75   6  65   4  75   1  85   1 ',
+        'Ninja          75  65  75  85  55  55  70  70  85  15  90  15 ',
+        'Centaur        75  75  80  85  70  55  70  65  85  15 100  15 ',
+        'Boulder        70  90  95  80  85  70  75  75  80  45  85  40 ',
+        'Mage          120 120 120  85 120  30  75  35  85  20  95  10 ',
+        'Brimstone      80  95 100  90  90  80  85  85  85  55  90  50 ',
+        'Troll         105 105 115 105  95  85 105 105 105  55 115  45 ',
+        'Thunderstorm  120 120 120 120 120  85 120  95 120  65 120  60 ',
+        'Giant         125 125 135 125 115 105 115 115 125  75 135  55 '
+    ]
     # first word is the unit type e.g. Unicorn - track the order these appear
-    dmg_tbl_order = [re.sub(r'[: ].+', '', dmg.strip()) for dmg in DAMAGE_MATRIX]
+    dmg_tbl_order = [re.sub(r'[: ].+', '', dmg.strip()) for dmg in dmg_matrix]
     total_dmg = {}
-    for dmg_ar_str in DAMAGE_MATRIX:
+    for dmg_ar_str in dmg_matrix:
         dmg_ar = re.split(r' +', dmg_ar_str.strip().replace(':', ''))
         attacker = dmg_ar[0]
         DAMAGE_TBL[attacker] = {} # unit type
@@ -123,11 +125,8 @@ def setup_damage_table():
                 res += ' {:3d}'.format(DAMAGE_TBL[attacker][defender])
             new_tbl.append(res)
         DBGPRINT("{}\n{}".format(DAMAGE_TBL, "\n".join(new_tbl)))
-setup_damage_table()
 
-LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja'.split())
-ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['attackmin'] > 0])
-MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['attackmin'] > 1])
+setup_damage_table()
 
 MY_HQ, OTHER_HQ = None, []
 MY_UNITS, ENEMY_UNITS = [], []
@@ -297,6 +296,9 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
 def dist(unit, tile):
     """euclidean distance - used for missile attacks and a (bad) approximation of travel time."""
     return abs(tile['x'] - unit['x']) + abs(tile['y'] - unit['y'])
+
+def is_visible(unit, tile):
+    return (dist(unit, tile) <= UNIT_TYPES[unit['unit_name']]['vision'])
 
 def tile_dict_strip(mydict, other_fields_to_strip=None):
     fields_to_strip = [
@@ -500,18 +502,21 @@ def tile_details_str(tile, extra_fields_to_exclude=None):
         fields_to_exclude += extra_fields_to_exclude
     return name_val_dict_str(tile_dict_strip(tile, fields_to_exclude))
 
-def my_units_by_dist():
+def units_by_dist(my_units, other_hq):
     # todo: support multiple enemies
-    units_by_dist = sorted(MY_UNITS, key=lambda tile: dist(OTHER_HQ[0], tile))
+    units_by_dist = sorted(my_units, key=lambda tile: dist(other_hq, tile))
     if DBG_NOTABLE_TILES:
         dbg_units = ["units by distance:"]
         for unit in units_by_dist:
             dbg_units.append("{}{}: {:.0f} from enemy hq [{},{}]: {}".format(
                 "moved " if str(unit['moved'])=='1' else "", tilestr(unit),
-                dist_from_enemy_hq(unit), OTHER_HQ[0]['x'], OTHER_HQ[0]['y'],
+                dist_from_enemy_hq(unit), other_hq['x'], other_hq['y'],
                 tile_details_str(unit, ['moved'])))
         DBGPRINT("\n".join(dbg_units))
     return units_by_dist
+
+def my_units_by_dist():
+    return units_by_dist(MY_UNITS, OTHER_HQ[0])
 
 def msec(timedelta):
     return timedelta.seconds*1000 + int(timedelta.microseconds/1000)
@@ -629,10 +634,10 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
             if unit_type in ATTACKING_UNITS:
                 # missile units: don't move, just attack
                 attack_tile = unit if unit_type in MISSILE_UNITS else dest
-                attackmin = unit['unit_type']['attackmin']
-                attackmax = unit['unit_type']['attackmax']
+                atkmin = unit['unit_type']['atkmin']
+                atkmax = unit['unit_type']['atkmax']
                 attack_neighbors = [enemy_unit for enemy_unit in ENEMY_UNITS
-                                    if attackmin <= dist(attack_tile, enemy_unit) <= attackmax]
+                                    if atkmin <= dist(attack_tile, enemy_unit) <= atkmax]
                 if DBG_NOTABLE_TILES:
                     dbgmsgs = [ "enemy units from {}".format(tilestr(attack_tile)) ]
                     dbgmsgs.append("\n".join(["{}: {}".format(
@@ -735,7 +740,8 @@ def compressed_game_info(game_info, army_id):
         game_info['tiles'][0].append(tile)
     return game_info
 
-def select_next_move(player_id, game_info):
+def select_next_move(player_id, game_info, preparsed=False):
+    """if preparsed, then TILES_BY_IDX is already set."""
     if DBG_PRINT_SHORTCODES:
         DBGPRINT("\n".join(["{}: {}".format(name, typ) for name, typ in
                             sorted(TERRAIN_SHORTCODES.items())]))
@@ -761,7 +767,8 @@ def select_next_move(player_id, game_info):
 
     tiles, players = game_info['tiles'], game_info['players']
     army_id = players.get(player_id, {}).get('army_id', '')
-    parse_map(army_id, tiles, game_info)
+    if not preparsed:
+        parse_map(army_id, tiles, game_info)
     tiles_list = TILES_BY_IDX.values()
     if is_first_move_in_turn(game_info['game_id']):
         DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
