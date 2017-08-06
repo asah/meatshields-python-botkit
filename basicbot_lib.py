@@ -11,8 +11,8 @@
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
-import random, re, os, copy, datetime, json
-from multiprocessing import Process, SimpleQueue
+import random, re, os, copy, datetime, json, time
+from multiprocessing import Process, Queue, Manager
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
@@ -29,7 +29,8 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 # set to relatively high, so AI can uncover clever strategies
 MAX_JOIN_THRESHOLD = int(os.environ.get('DBG_STATS', '150'))
 
-PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '0') == '1')
+PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '1') == '1')
+DBG_PARALLEL_MOVE_DISCOVERY = (os.environ.get('DBG_PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
 APP = API = None
 
@@ -695,7 +696,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     if cache_move(mkres(end_turn=True), moves): return mkres(end_turn=True)
     return None
 
-def enumerate_all_moves(player_id, army_id, game_info, players, result_queue=None):
+def enumerate_all_moves(player_id, army_id, game_info, players,
+                        result_queue=None, worker_num=None):
     #DBGPRINT("enumerate_all_moves({}, {}, {}, {}, {})\n\nTILES_BY_IDX: {}".format(
     #    player_id, army_id, game_info, players, result_queue, len(TILES_BY_IDX))
     next_move, moves = True, {}
@@ -704,11 +706,34 @@ def enumerate_all_moves(player_id, army_id, game_info, players, result_queue=Non
         DBGPRINT("dbg_force_tile: {}".format(dbg_force_tile))
     while next_move is not None:
         next_move = enumerate_moves(player_id, army_id, game_info, players, moves)
-        if next_move is not None and result_queue:
-            #DBGPRINT('next_move: {}'.format(next_move))
-            result_queue.put(next_move)
+        #if next_move is not None: DBGPRINT('next_move: {}'.format(next_move))
     if result_queue is None:
         return moves
+    if DBG_PARALLEL_MOVE_DISCOVERY:
+        DBGPRINT('{} {} queuing {} moves'.format(worker_num, os.getpid(), len(moves)))
+    retry_cnt = 0
+    moves_list = list(moves.values()) + [ {'stop_worker_num': worker_num} ]
+    for i, move in enumerate(moves_list):
+        move_json = json.dumps(move)
+        while True:
+            try:
+                result_queue.put(move_json)
+            except:
+                retry_cnt += 1
+                if DBG_PARALLEL_MOVE_DISCOVERY:
+                    DBGPRINT('{} {} queue busy, sleeping and retrying {} bytes... {}'.format(
+                        worker_num, os.getpid(), len(move_json), retry_cnt))
+                time.sleep(1)
+                continue
+            else:
+                retry_cnt = 0
+                if DBG_PARALLEL_MOVE_DISCOVERY:
+                    DBGPRINT('{} {} queued move #{} of {}{}'.format(
+                        worker_num, os.getpid(), i+1, len(moves_list),
+                        len(move_json) if move.get('stop_worker_num') is None else 'STOP'))
+                break
+    if DBG_PARALLEL_MOVE_DISCOVERY:
+        DBGPRINT('{} {} done queuing moves - returning.'.format(worker_num, os.getpid()))
 
 # asah def damage(attacker, defender): asah
 # asah     return parseInt((baseOutputDmg * (attackerHP / attackerBaseHP))
@@ -778,23 +803,47 @@ def select_next_move(player_id, game_info, preparsed=False):
         DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
 
     if PARALLEL_MOVE_DISCOVERY:
-        moves, workers, result_queue = {}, [], SimpleQueue()
+        mpmgr = Manager()
+        moves, workers, result_queue = {}, [], mpmgr.Queue()
         # dbg_force_tile also signals a child process, i.e. avoid infinite recursion
         for unit in (MY_UNITS + MY_CASTLES):
-            #DBGPRINT("opening subprocess for unit: {}".format(tilestr(unit)))
+            if DBG_PARALLEL_MOVE_DISCOVERY:
+                DBGPRINT("opening subprocess for unit: {}".format(tilestr(unit)))
             game_info['dbg_force_tile'] = unit['xy']
             worker = Process(target=enumerate_all_moves, args=(
-                player_id, army_id, game_info, players, result_queue, ))
+                player_id, army_id, game_info, players, result_queue, len(workers), ))
             workers.append(worker)
             worker.start()
-        for worker in workers:
-            worker.join(timeout=7)
-        while not result_queue.empty():
-            cache_move(result_queue.get(), moves)                
+        if DBG_PARALLEL_MOVE_DISCOVERY:
+            DBGPRINT("waiting for subprocesses...")
+        cnt = 0
+        while True:
+            if DBG_PARALLEL_MOVE_DISCOVERY:
+                DBGPRINT('main proc {}: queue size: {}, {} workers.  fetching item...'.format(
+                    os.getpid(), result_queue.qsize(), sum([wrk is not None for wrk in workers])))
+            try:
+                qitem_json = result_queue.get_nowait()
+            except:
+                cnt += 1
+                if DBG_PARALLEL_MOVE_DISCOVERY:
+                    DBGPRINT('main proc {}: queue empty, {} workers, sleeping/retrying... {}'.format(
+                        os.getpid(), sum([wrk is not None for wrk in workers]), cnt))
+                time.sleep(1)
+                continue
+            cnt = 0
+            qitem = json.loads(qitem_json)
+            stop_worker_num = qitem.get('stop_worker_num')
+            if stop_worker_num is None:
+                cache_move(qitem, moves)
+                continue
+            if DBG_PARALLEL_MOVE_DISCOVERY:
+                DBGPRINT("stopping worker {}".format(stop_worker_num))
+            workers[stop_worker_num] = None
+            if not any(workers):
+                break
     else:
         moves = enumerate_all_moves(player_id, army_id, game_info, players)
 
-    if DBG_STATS: DBGPRINT("{} moves available.".format(len(moves)))
     mvkey = random.choice(list(moves.keys()))
     if DBG_MOVES:
         DBGPRINT("{} moves available:\n{}".format(
