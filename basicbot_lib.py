@@ -298,7 +298,10 @@ def dist(unit, tile):
     return abs(tile['x'] - unit['x']) + abs(tile['y'] - unit['y'])
 
 def is_visible(unit, tile):
-    return (dist(unit, tile) <= UNIT_TYPES[unit['unit_name']]['vision'])
+    distance = dist(unit, tile)
+    if tile['terrain_name'] == 'Forest':
+        return distance <= 1
+    return (distance <= UNIT_TYPES[unit['unit_name']]['vision'])
 
 def tile_dict_strip(mydict, other_fields_to_strip=None):
     fields_to_strip = [
@@ -504,16 +507,16 @@ def tile_details_str(tile, extra_fields_to_exclude=None):
 
 def units_by_dist(my_units, other_hq):
     # todo: support multiple enemies
-    units_by_dist = sorted(my_units, key=lambda tile: dist(other_hq, tile))
+    sorted_units = sorted(my_units, key=lambda tile: dist(other_hq, tile))
     if DBG_NOTABLE_TILES:
         dbg_units = ["units by distance:"]
-        for unit in units_by_dist:
+        for unit in sorted_units:
             dbg_units.append("{}{}: {:.0f} from enemy hq [{},{}]: {}".format(
                 "moved " if str(unit['moved'])=='1' else "", tilestr(unit),
                 dist_from_enemy_hq(unit), other_hq['x'], other_hq['y'],
                 tile_details_str(unit, ['moved'])))
         DBGPRINT("\n".join(dbg_units))
-    return units_by_dist
+    return sorted_units
 
 def my_units_by_dist():
     return units_by_dist(MY_UNITS, OTHER_HQ[0])
