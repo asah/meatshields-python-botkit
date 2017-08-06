@@ -30,6 +30,7 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 MAX_JOIN_THRESHOLD = int(os.environ.get('DBG_STATS', '150'))
 
 PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '1') == '1')
+DBG_PARALLEL_MOVE_DISCOVERY = (os.environ.get('DBG_PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
 APP = API = None
 
@@ -266,6 +267,9 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
                           'cost_remaining={}, path={}, typ={}, terr={}'
         ).format(tilestr(tile), tilestr(unit_tile), walkcost, cost_remaining,
                  pathstr(path), unit_type, terrain))
+    for nbr in xyneighbors(tile):
+        if 'seen' not in nbr:
+            DBGPRINT("no seen-fieldin nbr: {}".format(tilestr(nbr)))
     immediate_neighbors = [nbr for nbr in xyneighbors(tile) if
                            # revisit tiles only if there's greater walking range left
                            cost_remaining > nbr['seen'] and
@@ -535,6 +539,14 @@ def copy_move(move, update):
     new_move.update(update)
     return new_move
 
+def is_unloaded_unicorn(unit):
+    return unit['unit_name'] == 'Unicorn' and \
+        unit.get('slot1_deployed_unit_name', '') in [None, '']
+
+def is_loaded_unicorn(unit):
+    return unit['unit_name'] == 'Unicorn' and \
+        unit.get('slot1_deployed_unit_name', '') not in [None, '']
+
 def enumerate_moves(player_id, army_id, game_info, players, moves):
     my_info = players[player_id]
     # debug hack to force the algorithm to 'pick' this tile for the move,
@@ -551,7 +563,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
 
         # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
         # all in one turn
-        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '') != '':
+        if is_loaded_unicorn(unit):
             valid_neighbors = [nbr for nbr in xyneighbors(unit) if
                                nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
             if DBG_MOVES: DBGPRINT('loaded, unmoved unicorn found: {}  -- neighbors:\n{}'.format(
@@ -565,14 +577,14 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                 if cache_move(mkres(move=move), moves): return mkres(move=move)
 
         # decide on unicorn (re)loading next -- possible unload/reload/move/unload all in one turn
-        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '') == '':
+        if is_unloaded_unicorn(unit):
             loadable_units = [nbr for nbr in MY_UNITS if
                               nbr['unit_name'] in LOADABLE_UNITS and
                               nbr['moved'] == '0' and
                               unit['xystr'] in [nbr['xystr'] for nbr in walkable_tiles(
                                   nbr, army_id, nbr, nbr['unit_type']['move'], [])]]
-            if DBG_MOVES: DBGPRINT('unloaded unicorn found: {}  -- neighbors:\n{}'.format(
-                tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
+            if DBG_MOVES: DBGPRINT('unloaded unicorn found: {}  -- loadable neighbors:\n{}'.format(
+                tilestr(unit), "\n".join([tilestr(nbr) for nbr in loadable_units])))
             for nbr in loadable_units:
                 move = { 'x_coordinate': nbr['x_coordinate'], 'y_coordinate': nbr['y_coordinate'],
                          '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'load',
@@ -592,8 +604,9 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         neighbors = walkable_tiles(unit, army_id, unit, unit_max_move, [])
         # only include our own units if joinable
         neighbors = [nbr for nbr in neighbors if nbr['unit_army_id'] is None or
-                     (nbr['unit_name'] == unit['unit_name'] and
-                      unit_health(nbr) + unit_health(unit) <= MAX_JOIN_THRESHOLD) ]
+                     (nbr['unit_army_id'] == army_id and nbr['unit_name'] == unit['unit_name'] and
+                      not is_loaded_unicorn(nbr) and not is_loaded_unicorn(unit) and
+                      unit_health(nbr) + unit_health(unit) <= MAX_JOIN_THRESHOLD ) ]
         # not moving is a valid choice
         neighbors.append(unit)
         uniq_neighbors = {}
@@ -605,7 +618,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         for dest in uniq_neighbors_list:
             move = { 'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'] }
             if dest['xy'] == unit['xy']:
-                dbg_nbrs.append("no walkable neighbors for {}, move={}:".format(
+                dbg_nbrs.append("no movement for {}, move={}:".format(
                     tilestr(unit), unit_max_move))
                 move.update(
                     { '__unit_name': unit_type, '__unit_action': 'no_movement', 'movements': [] })
@@ -625,7 +638,15 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                         tilestr(nbr), pathstr(nbr['path'], show_terrain=True)))
             if DBG_MOVEMENT:
                 DBGPRINT("\n".join(dbg_nbrs))
-            
+
+            # join units
+            if (dest['xy'] != unit['xy'] and dest['unit_army_id'] == army_id and
+                dest['unit_name'] == unit['unit_name']):
+                dbg_nbrs.append("join units for {}, move={}:".format(
+                    tilestr(unit), unit_max_move))
+                join_move = copy_move(move, {'unit_action': 'join', '__action': 'join'})
+                if cache_move(join_move, moves): return mkres(move=join_move)
+
             # capture open towns, castles and headquarters
             if (can_capture(dest, unit, army_id) and
                 unit['capture_remaining'] not in [None, ""] and
@@ -634,7 +655,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                 if cache_move(capture_move, moves): return mkres(move=capture_move)
 
             # unload unicorn after move
-            if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '') != '':
+            if is_loaded_unicorn(unit):
                 valid_neighbors = [nbr for nbr in xyneighbors(unit) if
                                    nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
                 if DBG_MOVES: DBGPRINT('loaded, moved unicorn found: {}  -- neighbors:\n{}'.format(

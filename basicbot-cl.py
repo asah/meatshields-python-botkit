@@ -5,7 +5,7 @@ import os, json, random
 import basicbot_lib as bblib
 
 def main():
-    jsondata = json.loads(open('test_scale.json').read())
+    jsondata = json.loads(open('test_unicorn_load.json').read())
     player_id = str(jsondata['botPlayerId'])
     game_info = jsondata['gameInfo']
     random.seed()
