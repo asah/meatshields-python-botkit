@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import json, copy
+import json, copy, random
 import basicbot_lib as bblib
 
 MASTER_TILES_BY_IDX = None
@@ -29,8 +29,9 @@ def take_turn(jsondata):
             tile.clear()
             tile.update(newtile)
     jsondata['gameInfo']['__unitmap'] = bblib.unitmap_list(tiles_list, player_id)
+    random.seed()
     move = bblib.select_next_move(str(player_id), jsondata['gameInfo'], preparsed=True)
-    print(move)
+    print("move: \n{}".format(bblib.compact_json_dumps(move)))
 
 def main():
     global MASTER_TILES_BY_IDX
