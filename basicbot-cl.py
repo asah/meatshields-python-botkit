@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # pylint:disable=C0103
 
-import json, random
+import os, json, random
 import basicbot_lib as bblib
 
 def main():

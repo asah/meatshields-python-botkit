@@ -30,7 +30,6 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 MAX_JOIN_THRESHOLD = int(os.environ.get('DBG_STATS', '150'))
 
 PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '1') == '1')
-DBG_PARALLEL_MOVE_DISCOVERY = (os.environ.get('DBG_PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
 APP = API = None
 
@@ -180,10 +179,9 @@ def compact_json_dumps(data):
     compact_response = re.sub(r'(?m)\r?\n +"(yCoord|y_coord)', r' "\1', compact_response)
     # keep __unit_name on the same line as  __unit_action
     # keep building_army_name and building_team_name on the same line as building_army_id
-    # keep 
     compact_response = re.sub(
         r'(?m)\r?\n +"(__unit_name|__walkcost|building_army_name|building_team_name|'+
-        r'health|secondary_ammo|unit_army_name|unit_id|unit_name|unit_team_name)',
+        r'health|secondary_ammo|unit_army_name|unit_id|unit_name|unit_team_name|response_msec)',
         r' "\1', compact_response)
     return compact_response
 
@@ -553,20 +551,21 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
 
         # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
         # all in one turn
-        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name','') != '':
+        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '') != '':
             valid_neighbors = [nbr for nbr in xyneighbors(unit) if
                                nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
-            if DBG_MOVES: DBGPRINT('loaded unicorn found: {}  -- neighbors:\n{}'.format(
+            if DBG_MOVES: DBGPRINT('loaded, unmoved unicorn found: {}  -- neighbors:\n{}'.format(
                 tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
             for nbr in valid_neighbors:
                 move = {
-                    'x_coordinate': nbr['x_coordinate'], 'y_coordinate': nbr['y_coordinate'],
+                    'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],
+                    'x_coord_action': nbr['x_coordinate'], 'y_coord_action': nbr['y_coordinate'],
                     '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                     'movements': [], 'unit_action': 'unloadSlot1' }
                 if cache_move(mkres(move=move), moves): return mkres(move=move)
 
         # decide on unicorn (re)loading next -- possible unload/reload/move/unload all in one turn
-        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '')=='':
+        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '') == '':
             loadable_units = [nbr for nbr in MY_UNITS if
                               nbr['unit_name'] in LOADABLE_UNITS and
                               nbr['moved'] == '0' and
@@ -634,6 +633,19 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                 capture_move = copy_move(move, {'unit_action': 'capture', '__action': 'capture'})
                 if cache_move(capture_move, moves): return mkres(move=capture_move)
 
+            # unload unicorn after move
+            if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '') != '':
+                valid_neighbors = [nbr for nbr in xyneighbors(unit) if
+                                   nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
+                if DBG_MOVES: DBGPRINT('loaded, moved unicorn found: {}  -- neighbors:\n{}'.format(
+                    tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
+                for nbr in valid_neighbors:
+                    unload_move = copy_move(move, {
+                        'x_coord_action': nbr['x_coordinate'], 'y_coord_action': nbr['y_coordinate'],
+                        '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
+                        'unit_action': 'unloadSlot1' })
+                    if cache_move(mkres(move=unload_move), moves): return mkres(move=unload_move)
+            
             # attacks
             if unit_type in ATTACKING_UNITS:
                 # missile units: don't move, just attack

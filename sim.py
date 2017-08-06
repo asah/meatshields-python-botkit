@@ -32,6 +32,21 @@ def take_turn(jsondata):
     random.seed()
     move = bblib.select_next_move(str(player_id), jsondata['gameInfo'], preparsed=True)
     print("move: \n{}".format(bblib.compact_json_dumps(move)))
+    data = move['data']
+    if data['end_turn']: return
+    if data['purchase']:
+        unit_name = data['purchase']['unit_name']
+        unit_type = bblib.UNIT_TYPES[unit_name]
+        xyidx = int(data['purchase']['y_coordinate'])*1000 + int(data['purchase']['y_coordinate'])
+        MASTER_TILES_BY_IDX[xyidx].update({
+            'unit_army_id': str(player_id), 'unit_army_name': 'foo', 'unit_id': 999, 'unit_name': unit_name,
+            'unit_team_name': 'foo', 'health': "100", 'fuel': '100', 'primary_ammo': '100', 'secondary_ammo': '100',
+        })
+        return
+    # data['move'] == True
+    start_xyidx = int(data['move']['y_coordinate'])*1000 + int(data['move']['y_coordinate'])
+    movements
+    
 
 def main():
     global MASTER_TILES_BY_IDX
