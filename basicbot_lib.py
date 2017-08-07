@@ -11,7 +11,7 @@
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
-import random, re, os, copy, datetime, json, time
+import random, re, os, copy, datetime, json, time, numpy
 from multiprocessing import Process, Manager
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
@@ -91,7 +91,8 @@ ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'
 MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 1])
 
 DAMAGE_TBL = {}
-
+ATTACK_STRENGTH = {}
+DEFENSE_STRENGTH = {}
 def setup_damage_table():
     dmg_matrix = [
         'Unicorn         1   1   1   1   1   1   1   1   1   1   1   1 ',
@@ -109,16 +110,21 @@ def setup_damage_table():
     ]
     # first word is the unit type e.g. Unicorn - track the order these appear
     dmg_tbl_order = [re.sub(r'[: ].+', '', dmg.strip()) for dmg in dmg_matrix]
-    total_dmg = {}
+    num_types = len(dmg_tbl_order)
     for dmg_ar_str in dmg_matrix:
         dmg_ar = re.split(r' +', dmg_ar_str.strip().replace(':', ''))
         attacker = dmg_ar[0]
         DAMAGE_TBL[attacker] = {} # unit type
         for idx in range(len(dmg_ar)-1):
-            DAMAGE_TBL[attacker][dmg_tbl_order[idx]] = int(dmg_ar[idx+1])
-            total_dmg[attacker] = total_dmg.get(attacker, 0) + int(dmg_ar[idx+1])
+            defender = dmg_tbl_order[idx]
+            DAMAGE_TBL[attacker][defender] = int(dmg_ar[idx+1])
+            amt = int(dmg_ar[idx+1])
+            ATTACK_STRENGTH[attacker] = ATTACK_STRENGTH.get(attacker, 0) + amt
+            DEFENSE_STRENGTH[defender] = DEFENSE_STRENGTH.get(defender, 0) + 200 - amt
+    ATTACK_STRENGTH[attacker] = int(ATTACK_STRENGTH[attacker] / num_types)
+    DEFENSE_STRENGTH[attacker] = int(DEFENSE_STRENGTH[attacker] / num_types)
     if DBG_PRINT_DAMAGE_TBL:
-        new_sort = sorted(DAMAGE_TBL.keys(), key=lambda k: total_dmg[k])
+        new_sort = sorted(DAMAGE_TBL.keys(), key=lambda k: ATTACK_STRENGTH[k])
         new_tbl = []
         for attacker in new_sort:
             res = "{:12s} ".format(attacker)
@@ -267,12 +273,9 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
                           'cost_remaining={}, path={}, typ={}, terr={}'
         ).format(tilestr(tile), tilestr(unit_tile), walkcost, cost_remaining,
                  pathstr(path), unit_type, terrain))
-    for nbr in xyneighbors(tile):
-        if 'seen' not in nbr:
-            DBGPRINT("no seen-fieldin nbr: {}".format(tilestr(nbr)))
     immediate_neighbors = [nbr for nbr in xyneighbors(tile) if
                            # revisit tiles only if there's greater walking range left
-                           cost_remaining > nbr['seen'] and
+                           cost_remaining > nbr.get('seen', 0) and
                            # walk over friends but not enemies
                            nbr['unit_army_id'] in [None, army_id]]
     if DBG_MOVEMENT:
@@ -433,15 +436,41 @@ def set_xy_fields(tile):
     tile['xystr'], tile['xyidx'] = tile2xystr(tile), tile2xyidx(tile)
     return tile
 
-def parse_map(army_id, tiles, game_info):
+def parse_tiles_by_idx(army_id, tiles_by_idx):
     global MY_HQ, OTHER_HQ, MY_UNITS, ENEMY_UNITS, MY_CASTLES
-    global OTHER_CASTLES, MY_TOWNS, OTHER_TOWNS, TILES_BY_IDX
+    global OTHER_CASTLES, MY_TOWNS, OTHER_TOWNS
     MY_HQ, OTHER_HQ = None, []
     MY_UNITS, ENEMY_UNITS = [], []
     MY_CASTLES, OTHER_CASTLES = [], []
     MY_TOWNS, OTHER_TOWNS = [], []
-    TILES_BY_IDX = {}
-    notable_tiles = []
+    tiles, notable_tiles = list(tiles_by_idx.values()), []
+    for tile in tiles:
+        # unit_name will be absent if unit is killed...
+        if tile.get('unit_name') is not None and tile['unit_army_id'] not in ["", None]:
+            units_list = MY_UNITS if tile['unit_army_id'] == army_id else ENEMY_UNITS
+            units_list.append(tile)
+            tile['unit_type'] = UNIT_TYPES[tile['unit_name']]
+            notable_tiles.append(tile)
+        if tile['terrain_name'] == 'Headquarters':
+            if is_my_building(tile, army_id):
+                MY_HQ = tile
+            else:
+                OTHER_HQ.append(tile)
+            notable_tiles.append(tile)
+        elif tile['terrain_name'] == 'Castle':
+            castle_list = MY_CASTLES if is_my_building(tile, army_id) else OTHER_CASTLES
+            castle_list.append(tile)
+            notable_tiles.append(tile)
+        elif tile['terrain_name'] == 'Town':
+            town_list = MY_TOWNS if is_my_building(tile, army_id) else OTHER_TOWNS
+            town_list.append(tile)
+    if DBG_NOTABLE_TILES:
+        DBGPRINT("notable_tiles:  my army_id={}\n{}".format(
+            army_id, "\n".join([tilestr(tile, show_details=True)
+                                for tile in sorted_tiles(notable_tiles)])))
+    
+def parse_map(army_id, tiles, game_info):
+    TILES_BY_IDX.clear()
     next_tile_id = 1000
     if '__tilemap' in game_info:
         for ypos, row in enumerate(game_info['__tilemap']):
@@ -469,31 +498,7 @@ def parse_map(army_id, tiles, game_info):
                 TILES_BY_IDX[tile['xyidx']].update(tile)
             else:
                 TILES_BY_IDX[tile['xyidx']] = tile
-    tiles = list(TILES_BY_IDX.values())
-    for tile in tiles:
-        # unit_name will be absent if unit is killed...
-        if tile.get('unit_name') is not None and tile['unit_army_id'] not in ["", None]:
-            units_list = MY_UNITS if tile['unit_army_id'] == army_id else ENEMY_UNITS
-            units_list.append(tile)
-            tile['unit_type'] = UNIT_TYPES[tile['unit_name']]
-            notable_tiles.append(tile)
-        if tile['terrain_name'] == 'Headquarters':
-            if is_my_building(tile, army_id):
-                MY_HQ = tile
-            else:
-                OTHER_HQ.append(tile)
-            notable_tiles.append(tile)
-        elif tile['terrain_name'] == 'Castle':
-            castle_list = MY_CASTLES if is_my_building(tile, army_id) else OTHER_CASTLES
-            castle_list.append(tile)
-            notable_tiles.append(tile)
-        elif tile['terrain_name'] == 'Town':
-            town_list = MY_TOWNS if is_my_building(tile, army_id) else OTHER_TOWNS
-            town_list.append(tile)
-    if DBG_NOTABLE_TILES:
-        DBGPRINT("notable_tiles:  my army_id={}\n{}".format(
-            army_id, "\n".join([tilestr(tile, show_details=True)
-                                for tile in sorted_tiles(notable_tiles)])))
+    parse_tiles_by_idx(army_id, TILES_BY_IDX)
 
 def dist_from_enemy_hq(tile):
     return dist(OTHER_HQ[0], tile)
@@ -645,14 +650,14 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                 dbg_nbrs.append("join units for {}, move={}:".format(
                     tilestr(unit), unit_max_move))
                 join_move = copy_move(move, {'unit_action': 'join', '__action': 'join'})
-                if cache_move(join_move, moves): return mkres(move=join_move)
+                if cache_move(mkres(move=join_move), moves): return mkres(move=join_move)
 
             # capture open towns, castles and headquarters
             if (can_capture(dest, unit, army_id) and
                 unit['capture_remaining'] not in [None, ""] and
                 int(unit['capture_remaining']) > 0):
                 capture_move = copy_move(move, {'unit_action': 'capture', '__action': 'capture'})
-                if cache_move(capture_move, moves): return mkres(move=capture_move)
+                if cache_move(mkres(move=capture_move), moves): return mkres(move=capture_move)
 
             # unload unicorn after move
             if is_loaded_unicorn(unit):
@@ -874,7 +879,23 @@ def select_next_move(player_id, game_info, preparsed=False):
     else:
         moves = enumerate_all_moves(player_id, army_id, game_info, players)
 
-    mvkey = random.choice(list(moves.keys()))
+    sum_scores = 0.0
+    for move in moves.values():
+        tiles_by_idx = copy.deepcopy(TILES_BY_IDX)
+        res = apply_move(tiles_by_idx, move, player_id)
+        if res is None:
+            DBGPRINT("bad move {}: skipping...".format(move))
+            move['__score'] = 0
+            continue
+        move['__score'] = score_position(army_id, tiles_by_idx)
+        sum_scores += move['__score']
+    for move in moves.values():
+        move['__score_pct'] = move['__score'] / sum_scores
+
+    movekeys = list(moves.keys())
+    mvkey = numpy.random.choice(
+        movekeys, p=[ moves[movekey]['__score_pct'] for movekey in movekeys ])
+                                
     if DBG_MOVES:
         DBGPRINT("{} moves available:\n{}".format(
             len(moves), "\n".join(["{}{}".format(
@@ -905,6 +926,34 @@ def select_next_move(player_id, game_info, preparsed=False):
                         'response_msec': msec(total_time) }
     return move
 
+def player_units(player_id, tiles_by_idx):
+    return [tile for tile in tiles_by_idx.values() if
+            tile.get('unit_name') is not None and tile['unit_army_id'] == player_id]
+
+def set_fog_values(player_id, tiles_by_idx):
+    my_units = player_units(player_id, tiles_by_idx)
+    num_visible = 0
+    for tile in tiles_by_idx.values():
+        tile['in_fog'] = "1"
+        for unit in my_units:
+            if is_visible(unit, tile):
+                num_visible += 1
+                tile['in_fog'] = "0"
+                break
+        if tile['in_fog'] == "1":
+            newtile = dict( (key, val) for key, val in tile.items() if key in [
+                'xy', 'xystr', 'terrain_name', 'x_coordinate', 'y_coordinate', 'x', 'y',
+                'defense', 'in_fog'])
+            tile.clear()
+            tile.update(newtile)
+    return num_visible
+
+def new_funds(player_id, tiles_by_idx):
+    my_units = player_units(player_id, tiles_by_idx)
+    return len([unit for unit in my_units if
+                unit['terrain_name'] in CAPTURABLE_TERRAIN]) * 1000
+
+
 UNIT_DICT_KEYS = [ 'unit_army_id', 'unit_army_name', 'unit_id', 'unit_name', 
                    'unit_team_name', 'health', 'fuel', 'primary_ammo', 'secondary_ammo' ]
 
@@ -930,6 +979,7 @@ def apply_move(tiles_by_idx, move, player_id):
         if src_tile['terrain_name'] in CAPTURABLE_TERRAIN:
             src_tile['capture_remaining'] = "100"
 
+    #DBGPRINT("move={}".format(move))
     data = move['data']
     if data['end_turn']: return False
     if data['purchase']:
@@ -943,33 +993,34 @@ def apply_move(tiles_by_idx, move, player_id):
         })
         return True
     # data['move'] == True
-    src_xyidx = dest_xyidx = movedict_xyidx(data['move'])
+    movemove = data['move']
+    src_xyidx = dest_xyidx = movedict_xyidx(movemove)
     src_tile = dest_tile = tiles_by_idx[src_xyidx]
-    if len(move['movements']) > 0:
-        dest_xyidx = movedict_xyidx(move['movements'][-1])
+    if len(movemove['movements']) > 0:
+        dest_xyidx = movedict_xyidx(movemove['movements'][-1])
         dest_tile = tiles_by_idx[dest_xyidx]
 
-    if move['unit_action'] == 'unloadSlot1':
+    if movemove.get('unit_action', 'simplemove') == 'unloadSlot1':
         if not is_loaded_unicorn(dest_tile):
             return mverr("attempted to unload a tile that isn't a loaded Unicorn: {}".format(
                 tilestr(dest_tile, True)))
         move_unit(src_tile, dest_tile)
-        unload_xyidx = int(move['x_coord_action'])*1000 + int(move['y_coord_action'])
-        del src_tile['slot1_deployed_unit_id']
-        del src_tile['slot1_deployed_unit_name']
-        del src_tile['slot1_deployed_unit_health']
+        unload_xyidx = int(movemove['y_coord_action'])*1000 + int(movemove['x_coord_action'])
         update_tile_with_dict(tiles_by_idx[unload_xyidx], {
             'unit_army_id': str(player_id), 'unit_army_name': 'TODO:armyname',
-            'unit_id': src_tile['slot1_deployed_unit_id'],
+            'unit_id': src_tile.get('slot1_deployed_unit_id', 999),
             'unit_name': src_tile['slot1_deployed_unit_name'],
             'health': src_tile['slot1_deployed_unit_health'],
             'unit_team_name': 'foo', 'fuel': '100',
             'primary_ammo': '100', 'secondary_ammo': '100',
         })
+        del src_tile['slot1_deployed_unit_id']
+        del src_tile['slot1_deployed_unit_name']
+        del src_tile['slot1_deployed_unit_health']
         return True
 
-    if move['unit_action'] == 'load':
-        if len(move['movements']) == 0:
+    if movemove.get('unit_action', 'simplemove') == 'load':
+        if len(movemove['movements']) == 0:
             return mverr("can't load without movement: {}".format(tilestr(src_tile, True)))
         if is_loaded_unicorn(dest_tile):
             return mverr("can't load Unicorn that's already loaded: {}".format(
@@ -978,7 +1029,7 @@ def apply_move(tiles_by_idx, move, player_id):
             return mverr("can't this type of unit: {}".format(
                 tilestr(dest_tile, True)))
         move_unit(src_tile, dest_tile)
-        load_xyidx = int(move['x_coord_action'])*1000 + int(move['y_coord_action'])
+        load_xyidx = int(movemove['x_coord_action'])*1000 + int(movemove['y_coord_action'])
         update_tile_with_dict(tiles_by_idx[load_xyidx], {
             'slot1_deployed_unit_id': dest_tile['unit_id'],
             'slot1_deployed_unit_name': dest_tile['unit_name'],
@@ -986,7 +1037,7 @@ def apply_move(tiles_by_idx, move, player_id):
         del_unit(dest_tile)
         return True
 
-    if move['unit_action'] == 'join':
+    if movemove.get('unit_action', 'simplemove') == 'join':
         if src_tile['unit_name'] != dest_tile['unit_name']:
             return mverr("attempted to join incompatible types: {} ==> {}".format(
                 tilestr(src_tile), tilestr(dest_tile)))
@@ -1001,7 +1052,7 @@ def apply_move(tiles_by_idx, move, player_id):
         dest_tile['health'] = health
         return True
 
-    if move['unit_action'] == 'capture':
+    if movemove.get('unit_action', 'simplemove') == 'capture':
         if dest_tile['terrain_name'] not in CAPTURABLE_TERRAIN:
             return mverr("terrain can't be captured: {}".format(tilestr(dest_tile, True)))
         if dest_tile['unit_name'] not in CAPTURING_UNITS:
@@ -1022,7 +1073,7 @@ def apply_move(tiles_by_idx, move, player_id):
     if 'x_coord_attack' in move:
         if src_tile['unit_name'] not in ATTACKING_UNITS:
             return mverr("unit can't attack: {}".format(tilestr(src_tile, True)))
-        attack_xyidx = int(move['x_coord_attack'])*1000 + int(move['y_coord_attack'])
+        attack_xyidx = int(movemove['x_coord_attack'])*1000 + int(movemove['y_coord_attack'])
         attackee = tiles_by_idx[attack_xyidx]
         if attackee.get('unit_name') not in UNIT_TYPES.keys():
             return mverr("can't attack, no unit at dest: {}".format(tilestr(attackee, True)))
@@ -1037,6 +1088,40 @@ def apply_move(tiles_by_idx, move, player_id):
             del_unit(attackee)
         return True
 
-    return mverr("action not implemented?  move={}".format(move))
+    # simple movement
+    move_unit(src_tile, dest_tile)
+    return True
 
+def attack_strength(unit):
+    health = unit.get('health', 100)
+    if health is None: health = 100
+    return ATTACK_STRENGTH[unit['unit_name']] * int(health) / 100.0
+
+def defense_strength(unit):
+    health = unit.get('health', 100)
+    if health is None: health = 100
+    return DEFENSE_STRENGTH[unit['unit_name']] * int(health) / 100.0 * \
+        (1.0 - (TERRAIN_DEFENSE[unit['terrain_name']] / 10.0))
+
+def score_position(army_id, tiles_by_idx):
+    # TODO: capture in progress and units that can't finish capture bec of attacks
+    # TODO: Enemy has less visibility -- also accounts for pushing back
+    # TODO: Special bonus for trying to capture castles and enemy hq
+    parse_tiles_by_idx(army_id, tiles_by_idx)
+    num_visible = set_fog_values(army_id, tiles_by_idx)
+    # More board visible (less fog) -- also accounts for moving to 'front line'
+    pct_visible = int((100.0 * num_visible) / len(tiles_by_idx))
+    production_capacity = len(MY_CASTLES) + len(MY_TOWNS)
+    num_my_units = len(MY_UNITS)
+    # scale to assuming 10 units before overwhelming other factors
+    sum_attack_strength = int(sum([attack_strength(unit)/10.0 for unit in MY_UNITS]))
+    sum_defense_strength = int(sum([defense_strength(unit)/10.0 for unit in MY_UNITS]))
+    score = num_my_units * 10 + production_capacity * 10 + pct_visible + \
+            sum_attack_strength + sum_defense_strength
+    DBGPRINT(("score_position: {} = num_my_units*10({}) + production*10({}) + "+
+              "pct_visible({}) + attack_str({}) + defense_str({})").format(
+                  score, num_my_units * 10, production_capacity * 10, pct_visible,
+                  sum_attack_strength, sum_defense_strength))
+    return score
     
+

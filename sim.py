@@ -6,34 +6,19 @@ import basicbot_lib as bblib
 MASTER_TILES_BY_IDX = None
 
 def take_turn(jsondata):
-    """return move"""
+    """returns move"""
     player_id = jsondata['botPlayerId']
-    player_units = [tile for tile in MASTER_TILES_BY_IDX.values() if
-                    tile.get('unit_name') is not None and tile['unit_army_id'] == player_id]
     player_info = jsondata['gameInfo']['players'][str(player_id)]
-    player_info['funds'] = player_info.get('funds', 0) + (
-        len([unit for unit in player_units if unit['terrain_name'] in bblib.CAPTURABLE_TERRAIN]))
+    player_info['funds'] = player_info.get('funds', 0) + \
+                           bblib.new_funds(player_id, MASTER_TILES_BY_IDX)
     print("taking turn for player_id={}: funds={}".format(player_id, player_info['funds']))
     bblib.TILES_BY_IDX = copy.deepcopy(MASTER_TILES_BY_IDX)
-    tiles_list = bblib.TILES_BY_IDX.values()
-    for tile in tiles_list:
-        tile['in_fog'] = "1"
-        for unit in player_units:
-            if bblib.is_visible(unit, tile):
-                tile['in_fog'] = "0"
-                break
-        if tile['in_fog'] == "1":
-            newtile = dict( (key, val) for key, val in tile.items() if key in [
-                'xy', 'xystr', 'terrain_name', 'x_coordinate', 'y_coordinate', 'x', 'y',
-                'defense', 'in_fog'])
-            tile.clear()
-            tile.update(newtile)
-    jsondata['gameInfo']['__unitmap'] = bblib.unitmap_list(tiles_list, player_id)
+    bblib.set_fog_values(player_id, bblib.TILES_BY_IDX)
+    jsondata['gameInfo']['__unitmap'] = bblib.unitmap_list(bblib.TILES_BY_IDX.values(), player_id)
     random.seed()
     move = bblib.select_next_move(str(player_id), jsondata['gameInfo'], preparsed=True)
     print("move: \n{}".format(bblib.compact_json_dumps(move)))
     return move
-    
 
 def main():
     global MASTER_TILES_BY_IDX
