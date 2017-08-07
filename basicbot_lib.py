@@ -23,6 +23,7 @@ DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
 DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
+DBG_SCORING = (os.environ.get('DBG_SCORING', '1') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 
 # max combined health before we no longer consider joining two units
@@ -112,6 +113,7 @@ def setup_damage_table():
     # first word is the unit type e.g. Unicorn - track the order these appear
     dmg_tbl_order = [re.sub(r'[: ].+', '', dmg.strip()) for dmg in dmg_matrix]
     num_types = len(dmg_tbl_order)
+    max_strength = 0
     for dmg_ar_str in dmg_matrix:
         dmg_ar = re.split(r' +', dmg_ar_str.strip().replace(':', ''))
         attacker = dmg_ar[0]
@@ -120,8 +122,11 @@ def setup_damage_table():
             defender = dmg_tbl_order[idx]
             DAMAGE_TBL[attacker][defender] = int(dmg_ar[idx+1])
             amt = int(dmg_ar[idx+1])
+            max_strength = max(max_strength, amt)
             ATTACK_STRENGTH[attacker] = ATTACK_STRENGTH.get(attacker, 0) + amt
-            DEFENSE_STRENGTH[defender] = DEFENSE_STRENGTH.get(defender, 0) + 200 - amt
+            DEFENSE_STRENGTH[defender] = DEFENSE_STRENGTH.get(defender, 0) - amt
+    for unit_type in DAMAGE_TBL.keys():
+        DEFENSE_STRENGTH[unit_type] += max_strength * len(DAMAGE_TBL.keys())
     ATTACK_STRENGTH[attacker] = int(ATTACK_STRENGTH[attacker] / num_types)
     DEFENSE_STRENGTH[attacker] = int(DEFENSE_STRENGTH[attacker] / num_types)
     if DBG_PRINT_DAMAGE_TBL:
@@ -612,7 +617,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
             tile['seen'], tile['path'] = 0, None
         unit['seen'], unit['path'] = 1, []
         unit_max_move = unit['unit_type']['move']
-        if unit_type == 'Unicorn' and unit.get('slot1_deployed_unit_name', '')!='':
+        if is_loaded_unicorn(unit):
             unit_max_move = 6
         neighbors = walkable_tiles(unit, army_id, unit, unit_max_move, [])
         # only include our own units if joinable
@@ -659,6 +664,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                     tilestr(unit), unit_max_move))
                 join_move = copy_move(move, {'unit_action': 'join', '__action': 'join'})
                 if cache_move(mkres(move=join_move), moves): return mkres(move=join_move)
+                # only join's are allowed on occupied tiles
+                continue
 
             # capture open towns, castles and headquarters
             if (can_capture(dest, unit, army_id) and
@@ -1127,10 +1134,11 @@ def score_position(army_id, tiles_by_idx):
     sum_defense_strength = int(sum([defense_strength(unit)/10.0 for unit in MY_UNITS]))
     score = num_my_units * 10 + production_capacity * 10 + pct_visible + \
             sum_attack_strength + sum_defense_strength
-    DBGPRINT(("score_position: {} = num_my_units*10({}) + production*10({}) + "+
-              "pct_visible({}) + attack_str({}) + defense_str({})").format(
-                  score, num_my_units * 10, production_capacity * 10, pct_visible,
-                  sum_attack_strength, sum_defense_strength))
+    if DBG_SCORING:
+        DBGPRINT(("score_position: {} = num_my_units*10({}) + production*10({}) + "+
+                  "pct_visible({}) + attack_str({}) + defense_str({})").format(
+                      score, num_my_units * 10, production_capacity * 10, pct_visible,
+                      sum_attack_strength, sum_defense_strength))
     return score
     
 
