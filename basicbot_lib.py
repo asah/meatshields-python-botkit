@@ -49,6 +49,7 @@ def mkres(**args):
     res.update(args)
     return { "status": "success", "data": res }
 
+
 # others are borders and ignored: Ocean, Reef
 NORMAL_TERRAIN = set(['Plains','Town','Headquarters','Castle','Road','Bridge','Shore'])
 WALKABLE_TERRAIN = set(list(NORMAL_TERRAIN) + ['Forest','Mountains','River'])
@@ -151,6 +152,13 @@ TILE_DEFAULT_VALUES = dict([(tdv_fld,None) for tdv_fld in re.split(r'[ ,\r\n]+',
 TILE_KNOWN_FIELDS = list(TILE_DEFAULT_VALUES.keys()) + [
     'terrain_name', 'x_coordinate', 'y_coordinate', 'xy', 'xyidx', 'xystr'
 ]
+
+def ifnone(val, default):
+    return default if val is None else val
+
+def ifdictnone(mydict, key, default):
+    val = mydict.get(key, default)
+    return default if val is None else val
 
 def is_first_move_in_turn(game_id):
     last_move = LAST_MOVES.get(game_id)
@@ -984,7 +992,8 @@ def apply_move(tiles_by_idx, move, player_id):
     if data['end_turn']: return False
     if data['purchase']:
         unit_name = data['purchase']['unit_name']
-        new_unit_id = 100 + max([tile.get('unit_id', 0) for tile in tiles_by_idx.values()])
+        new_unit_id = 100 + \
+            max([int(ifdictnone(tile, 'unit_id', 0)) for tile in tiles_by_idx.values()])
         update_tile_with_dict(tiles_by_idx[movedict_xyidx(data['purchase'])], {
             'unit_army_id': str(player_id), 'unit_army_name': 'TODO:armyname',
             'unit_id': new_unit_id, 'unit_name': unit_name,
