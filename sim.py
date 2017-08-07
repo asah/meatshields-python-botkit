@@ -6,7 +6,7 @@ import basicbot_lib as bblib
 MASTER_TILES_BY_IDX = None
 
 def take_turn(jsondata):
-    """return True if game is to continue."""
+    """return move"""
     player_id = jsondata['botPlayerId']
     player_units = [tile for tile in MASTER_TILES_BY_IDX.values() if
                     tile.get('unit_name') is not None and tile['unit_army_id'] == player_id]
@@ -32,20 +32,7 @@ def take_turn(jsondata):
     random.seed()
     move = bblib.select_next_move(str(player_id), jsondata['gameInfo'], preparsed=True)
     print("move: \n{}".format(bblib.compact_json_dumps(move)))
-    data = move['data']
-    if data['end_turn']: return
-    if data['purchase']:
-        unit_name = data['purchase']['unit_name']
-        unit_type = bblib.UNIT_TYPES[unit_name]
-        xyidx = int(data['purchase']['y_coordinate'])*1000 + int(data['purchase']['y_coordinate'])
-        MASTER_TILES_BY_IDX[xyidx].update({
-            'unit_army_id': str(player_id), 'unit_army_name': 'foo', 'unit_id': 999, 'unit_name': unit_name,
-            'unit_team_name': 'foo', 'health': "100", 'fuel': '100', 'primary_ammo': '100', 'secondary_ammo': '100',
-        })
-        return
-    # data['move'] == True
-    start_xyidx = int(data['move']['y_coordinate'])*1000 + int(data['move']['y_coordinate'])
-    movements
+    return move
     
 
 def main():
@@ -60,8 +47,9 @@ def main():
     while True:
         for player_info in game_info['players'].values():
             if player_info['turn_order'] == str(player_turn):
-                jsondata['botPlayerId'] = int(player_info['player_id'])
-                if take_turn(jsondata) is False:
+                player_id = jsondata['botPlayerId'] = int(player_info['player_id'])
+                move = take_turn(jsondata)
+                if not bblib.apply_move(MASTER_TILES_BY_IDX, move, player_id):
                     break
             player_turn = ((player_turn + 1) % num_players) + 1
 

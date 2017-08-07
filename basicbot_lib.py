@@ -12,7 +12,7 @@
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
 import random, re, os, copy, datetime, json, time
-from multiprocessing import Process, Queue, Manager
+from multiprocessing import Process, Manager
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
@@ -657,12 +657,14 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
             # unload unicorn after move
             if is_loaded_unicorn(unit):
                 valid_neighbors = [nbr for nbr in xyneighbors(unit) if
-                                   nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
+                                   nbr['unit_name'] is None and
+                                   nbr['terrain_name'] in WALKABLE_TERRAIN]
                 if DBG_MOVES: DBGPRINT('loaded, moved unicorn found: {}  -- neighbors:\n{}'.format(
                     tilestr(unit), "\n".join([tilestr(nbr) for nbr in valid_neighbors])))
                 for nbr in valid_neighbors:
                     unload_move = copy_move(move, {
-                        'x_coord_action': nbr['x_coordinate'], 'y_coord_action': nbr['y_coordinate'],
+                        'x_coord_action': nbr['x_coordinate'],
+                        'y_coord_action': nbr['y_coordinate'],
                         '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                         'unit_action': 'unloadSlot1' })
                     if cache_move(mkres(move=unload_move), moves): return mkres(move=unload_move)
@@ -768,11 +770,6 @@ def enumerate_all_moves(player_id, army_id, game_info, players,
     if DBG_PARALLEL_MOVE_DISCOVERY:
         DBGPRINT('{} {} done queuing moves - returning.'.format(worker_num, os.getpid()))
 
-# asah def damage(attacker, defender): asah
-# asah     return parseInt((baseOutputDmg * (attackerHP / attackerBaseHP))
-# asah * (1 - (defenderDef / 10))); asah asah
-# asah         baseOutputDmg, attackerHP, attackerBaseHP, defenderDef) asah
-    
 def abbr_move_json(move):
     res = json.dumps(move)
     res = res.replace('{"status": "success", "data": {', '')
@@ -859,7 +856,7 @@ def select_next_move(player_id, game_info, preparsed=False):
             except:
                 cnt += 1
                 if DBG_PARALLEL_MOVE_DISCOVERY:
-                    DBGPRINT('main proc {}: queue empty, {} workers, sleeping/retrying... {}'.format(
+                    DBGPRINT('main proc {}: queue empty, {} workers, sleep/retry... {}'.format(
                         os.getpid(), sum([wrk is not None for wrk in workers]), cnt))
                 time.sleep(1)
                 continue
@@ -907,3 +904,139 @@ def select_next_move(player_id, game_info, preparsed=False):
     move['__stats'] = { 'possible_moves': len(moves),
                         'response_msec': msec(total_time) }
     return move
+
+UNIT_DICT_KEYS = [ 'unit_army_id', 'unit_army_name', 'unit_id', 'unit_name', 
+                   'unit_team_name', 'health', 'fuel', 'primary_ammo', 'secondary_ammo' ]
+
+def apply_move(tiles_by_idx, move, player_id):
+    """added to library, so it can be used for forecasting.
+    note: in forecasting mode, unfogging doesn't reveal enemy troops.
+    returns False if the move is end_turn."""
+    def mverr(msg):
+        DBGPRINT("ERROR!  "+msg)
+    def movedict_xyidx(movedict):
+        return int(movedict.get('y_coordinate', movedict.get('yCoordinate', -1)))*1000 + \
+            int(movedict.get('x_coordinate', movedict.get('xCoordinate', -1)))
+    def update_tile_with_dict(tile, update_dict):
+        tiles_by_idx[tile['xyidx']].update(update_dict)
+    def update_tile_with_unit(tile, unit):
+        update_tile_with_dict(tile, dict( (key,val) for key,val in unit.items()
+                                          if key in UNIT_DICT_KEYS))
+    def del_unit(tile):
+        tile = dict( (key,val) for key,val in tile.items() if key not in UNIT_DICT_KEYS)
+    def move_unit(src_tile, dest_tile):
+        update_tile_with_unit(dest_tile, src_tile)
+        del_unit(src_tile)
+        if src_tile['terrain_name'] in CAPTURABLE_TERRAIN:
+            src_tile['capture_remaining'] = "100"
+
+    data = move['data']
+    if data['end_turn']: return False
+    if data['purchase']:
+        unit_name = data['purchase']['unit_name']
+        new_unit_id = 100 + max([tile.get('unit_id', 0) for tile in tiles_by_idx.values()])
+        update_tile_with_dict(tiles_by_idx[movedict_xyidx(data['purchase'])], {
+            'unit_army_id': str(player_id), 'unit_army_name': 'TODO:armyname',
+            'unit_id': new_unit_id, 'unit_name': unit_name,
+            'unit_team_name': 'foo', 'health': "100", 'fuel': '100',
+            'primary_ammo': '100', 'secondary_ammo': '100',
+        })
+        return True
+    # data['move'] == True
+    src_xyidx = dest_xyidx = movedict_xyidx(data['move'])
+    src_tile = dest_tile = tiles_by_idx[src_xyidx]
+    if len(move['movements']) > 0:
+        dest_xyidx = movedict_xyidx(move['movements'][-1])
+        dest_tile = tiles_by_idx[dest_xyidx]
+
+    if move['unit_action'] == 'unloadSlot1':
+        if not is_loaded_unicorn(dest_tile):
+            return mverr("attempted to unload a tile that isn't a loaded Unicorn: {}".format(
+                tilestr(dest_tile, True)))
+        move_unit(src_tile, dest_tile)
+        unload_xyidx = int(move['x_coord_action'])*1000 + int(move['y_coord_action'])
+        del src_tile['slot1_deployed_unit_id']
+        del src_tile['slot1_deployed_unit_name']
+        del src_tile['slot1_deployed_unit_health']
+        update_tile_with_dict(tiles_by_idx[unload_xyidx], {
+            'unit_army_id': str(player_id), 'unit_army_name': 'TODO:armyname',
+            'unit_id': src_tile['slot1_deployed_unit_id'],
+            'unit_name': src_tile['slot1_deployed_unit_name'],
+            'health': src_tile['slot1_deployed_unit_health'],
+            'unit_team_name': 'foo', 'fuel': '100',
+            'primary_ammo': '100', 'secondary_ammo': '100',
+        })
+        return True
+
+    if move['unit_action'] == 'load':
+        if len(move['movements']) == 0:
+            return mverr("can't load without movement: {}".format(tilestr(src_tile, True)))
+        if is_loaded_unicorn(dest_tile):
+            return mverr("can't load Unicorn that's already loaded: {}".format(
+                tilestr(dest_tile, True)))
+        if dest_tile['unit_name'] not in LOADABLE_UNITS:
+            return mverr("can't this type of unit: {}".format(
+                tilestr(dest_tile, True)))
+        move_unit(src_tile, dest_tile)
+        load_xyidx = int(move['x_coord_action'])*1000 + int(move['y_coord_action'])
+        update_tile_with_dict(tiles_by_idx[load_xyidx], {
+            'slot1_deployed_unit_id': dest_tile['unit_id'],
+            'slot1_deployed_unit_name': dest_tile['unit_name'],
+            'slot1_deployed_unit_health': dest_tile['health'] })
+        del_unit(dest_tile)
+        return True
+
+    if move['unit_action'] == 'join':
+        if src_tile['unit_name'] != dest_tile['unit_name']:
+            return mverr("attempted to join incompatible types: {} ==> {}".format(
+                tilestr(src_tile), tilestr(dest_tile)))
+        if is_loaded_unicorn(src_tile):
+            return mverr("attempted to join a Unicorn that's already loaded: {}".format(
+                tilestr(src_tile, True)))
+        if is_loaded_unicorn(dest_tile):
+            return mverr("attempted to join to Unicorn that's already loaded: {}".format(
+                tilestr(dest_tile, True)))
+        health = min(int(dest_tile['health']) + int(src_tile['health']), 100)
+        move_unit(src_tile, dest_tile)
+        dest_tile['health'] = health
+        return True
+
+    if move['unit_action'] == 'capture':
+        if dest_tile['terrain_name'] not in CAPTURABLE_TERRAIN:
+            return mverr("terrain can't be captured: {}".format(tilestr(dest_tile, True)))
+        if dest_tile['unit_name'] not in CAPTURING_UNITS:
+            return mverr("unit can't capture: {}".format(tilestr(dest_tile, True)))
+        if is_my_building(dest_tile, player_id):
+            return mverr("tile already captured: {}".format(tilestr(dest_tile, True)))
+        capture_remaining = dest_tile.get('capture_remaining', 20)
+        if capture_remaining is None: capture_remaining = 20
+        capture_remaining = max(0, capture_remaining - int(10.0 * dest_tile['health'] / 100.0))
+        move_unit(src_tile, dest_tile)
+        dest_tile['capture_remaining'] = str(capture_remaining)
+        if capture_remaining == 0:
+            dest_tile['building_army_id'] = player_id
+            dest_tile['building_army_name'] = "TODOarmy_name"
+            dest_tile['building_team_name'] = "TODOteam_name"
+        return True
+
+    if 'x_coord_attack' in move:
+        if src_tile['unit_name'] not in ATTACKING_UNITS:
+            return mverr("unit can't attack: {}".format(tilestr(src_tile, True)))
+        attack_xyidx = int(move['x_coord_attack'])*1000 + int(move['y_coord_attack'])
+        attackee = tiles_by_idx[attack_xyidx]
+        if attackee.get('unit_name') not in UNIT_TYPES.keys():
+            return mverr("can't attack, no unit at dest: {}".format(tilestr(attackee, True)))
+        # TODO: check in range
+        move_unit(src_tile, dest_tile)
+        base_damage = DAMAGE_TBL[src_tile['unit_name']][dest_tile['unit_name']]
+        attack_weight = int(src_tile['health']) / 100.0
+        terrain_weight = 1.0 - (TERRAIN_DEFENSE[dest_tile['terrain_name']] / 10.0)
+        damage = int(base_damage * attack_weight * terrain_weight)
+        attackee['health'] = int(attackee) - damage
+        if tiles_by_idx[attack_xyidx]['health'] <= 0:
+            del_unit(attackee)
+        return True
+
+    return mverr("action not implemented?  move={}".format(move))
+
+    
