@@ -33,8 +33,9 @@ def main():
         for player_info in game_info['players'].values():
             if player_info['turn_order'] == str(player_turn):
                 player_id = jsondata['botPlayerId'] = int(player_info['player_id'])
+                army_id = player_info.get(str(player_id), {}).get('army_id', '')
                 move = take_turn(jsondata)
-                if not bblib.apply_move(MASTER_TILES_BY_IDX, move, player_id):
+                if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, move):
                     break
             player_turn = ((player_turn + 1) % num_players) + 1
 
