@@ -11,7 +11,7 @@
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
-import random, re, os, copy, datetime, json, time, numpy
+import re, os, copy, datetime, json, time, numpy
 from multiprocessing import Process, Manager
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
@@ -24,6 +24,7 @@ DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
 DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
 DBG_SCORING = (os.environ.get('DBG_SCORING', '1') == '1')
+DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 
 # max combined health before we no longer consider joining two units
@@ -121,13 +122,13 @@ def setup_damage_table():
             defender = dmg_tbl_order[idx]
             DAMAGE_TBL[attacker][defender] = int(dmg_ar[idx+1])
             amt = int(dmg_ar[idx+1])
-            ATTACK_STRENGTH[attacker] = ATTACK_STRENGTH.get(attacker, 0) + amt
-            DEFENSE_STRENGTH[defender] = DEFENSE_STRENGTH.get(defender, 0) - amt
+            ATTACK_STRENGTH[attacker] = ATTACK_STRENGTH.get(attacker, 0) + amt / num_types
+            DEFENSE_STRENGTH[defender] = DEFENSE_STRENGTH.get(defender, 0) - amt / num_types
     min_attack = min(ATTACK_STRENGTH.values())
     min_defense = min(DEFENSE_STRENGTH.values())
     for unit in DAMAGE_TBL.keys():
-        ATTACK_STRENGTH[unit] -= min_attack
-        DEFENSE_STRENGTH[unit] -= min_defense
+        ATTACK_STRENGTH[unit] -= min_attack   # do allow 0: unicorns don't attack
+        DEFENSE_STRENGTH[unit] -= min_defense - 10.0  # don't allow 0.0
     if DBG_PRINT_DAMAGE_TBL:
         new_sort = sorted(DAMAGE_TBL.keys(), key=lambda k: ATTACK_STRENGTH[k])
         new_tbl = []
@@ -136,7 +137,8 @@ def setup_damage_table():
             for defender in new_sort:
                 res += ' {:3d}'.format(DAMAGE_TBL[attacker][defender])
             new_tbl.append(res)
-        DBGPRINT("{}\n{}".format(DAMAGE_TBL, "\n".join(new_tbl)))
+        DBGPRINT("DAMAGE_TBL: {}\n{}\nATTACK_STRENGTH:{}\nDEFENSE_STRENGTH:{}\n".format(
+            DAMAGE_TBL, "\n".join(new_tbl), ATTACK_STRENGTH, DEFENSE_STRENGTH))
 
 setup_damage_table()
 
@@ -147,11 +149,14 @@ MY_TOWNS, OTHER_TOWNS = [], []
 TILES_BY_IDX = {}
 
 TILE_DEFAULT_VALUES = dict([(tdv_fld,None) for tdv_fld in re.split(r'[ ,\r\n]+', """
-  building_army_id,building_army_name,building_team_name,capture_remaining,
-  deployed_unit_id,fuel,health,moved,primary_ammo,secondary_ammo,
-  slot1_deployed_unit_health,slot1_deployed_unit_id,slot1_deployed_unit_name,
-  slot2_deployed_unit_id,unit_army_id,unit_army_name,
-  unit_id,unit_name,unit_team_name""")])
+  building_army_id, building_army_name, building_team_name, capture_remaining, 
+  deployed_unit_id, primary_ammo, secondary_ammo, unit_id, unit_name, unit_team_name
+  slot1_deployed_unit_health, slot1_deployed_unit_id, slot1_deployed_unit_name, 
+  slot2_deployed_unit_id, unit_army_id, unit_army_name
+""")])
+TILE_DEFAULT_VALUES.update({
+    'health': "100", "fuel": "100", "moved": "0"
+})
 
 TILE_KNOWN_FIELDS = list(TILE_DEFAULT_VALUES.keys()) + [
     'terrain_name', 'x_coordinate', 'y_coordinate', 'xy', 'xyidx', 'xystr'
@@ -271,15 +276,14 @@ def can_capture(tile, unit, army_id):
     return (tile['terrain_name'] in CAPTURABLE_TERRAIN and unit['unit_name'] in CAPTURING_UNITS and
             not is_my_building(tile, army_id))
 
-def xyneighbors(tile):
+def xy_nbrs(xyidx):
+    # north/south aka y +/- 1000, east/west aka x +/- 1
+    return [xyidx+1000, xyidx-1000, xyidx+1, xyidx-1]
+    
+def immed_nbrs(tile):
     """simple adjacency excluding tiles that are off the map."""
-    xyidx = tile['xyidx']
-    return [nbr for nbr in [
-        # east/west aka x +/- 1
-        TILES_BY_IDX.get(xyidx+1),    TILES_BY_IDX.get(xyidx-1),
-        # north/south aka y +/- 1
-        TILES_BY_IDX.get(xyidx+1000), TILES_BY_IDX.get(xyidx-1000)
-    ] if nbr is not None]
+    return [nbr for nbr in [TILES_BY_IDX.get(xy) for xy in xy_nbrs(tile['xyidx'])]
+            if nbr is not None]
 
 def walk_cost(unit_type, terrain):
     if terrain not in WALKABLE_TERRAIN: return 0
@@ -310,7 +314,7 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
                           'cost_remaining={}, path={}, typ={}, terr={}'
         ).format(tilestr(tile), tilestr(unit_tile), walkcost, cost_remaining,
                  pathstr(path), unit_type, terrain))
-    immediate_neighbors = [nbr for nbr in xyneighbors(tile) if
+    immediate_neighbors = [nbr for nbr in immed_nbrs(tile) if
                            # revisit tiles only if there's greater walking range left
                            cost_remaining > nbr.get('seen', 0) and
                            # walk over friends but not enemies
@@ -607,6 +611,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     dbg_nbrs = []
     for unit in my_units_by_dist():
         unit['__mvclasses'] = {}
+        if unit.get('dbg_force_tile') == True:
+            dbg_force_tile = unit['xy']
     for unit in my_units_by_dist():
         if str(unit['moved'])=='1': continue
         if dbg_force_tile not in ['', unit['xy']]: continue
@@ -615,7 +621,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
         # all in one turn
         if is_loaded_unicorn(unit):
-            valid_neighbors = [nbr for nbr in xyneighbors(unit) if
+            valid_neighbors = [nbr for nbr in immed_nbrs(unit) if
                                nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
             for nbr in valid_neighbors:
                 unload_move = {
@@ -624,7 +630,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                     '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                     'movements': [], 'unit_action': 'unloadSlot1' }
                 if cache_move(mkres(move=unload_move), moves):
-                    if DBG_MOVES: DBGPRINT('loaded, unmoved unicorn: {} unload to {}'.format(
+                    if DBG_MOVES or DBG_UNICORN_LOADING:
+                        DBGPRINT('loaded, unmoved unicorn: {} unload to {}'.format(
                             tilestr(unit), tilestr(nbr)))
                     return mkres(move=unload_move)
 
@@ -634,20 +641,31 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
             for ldable in MY_UNITS:
                 if ldable['moved'] == '1' or ldable['unit_name'] not in LOADABLE_UNITS: continue
                 if dist(unicorn, ldable) > ldable['unit_type']['move']: continue
-                DBGPRINT('unloaded unicorn {}: checking {}'.format(tilestr(unit), tilestr(ldable)))
-                walk_dests = walkable_tiles(ldable, army_id, ldable, ldable['unit_type']['move'], [])
+                if DBG_UNICORN_LOADING:
+                    DBGPRINT('unloaded unicorn {}: checking loadable in range: {}'.format(
+                        tilestr(unit), tilestr(ldable)))
+                walk_dests = walkable_tiles(
+                    ldable, army_id, ldable, ldable['unit_type']['move'], [])
                 for walk_dest in walk_dests:
-                    DBGPRINT('unloaded unicorn {}: {} walk to {} via {}'.format(tilestr(unit), tilestr(ldable), tilestr(walk_dest), pathstr(walk_dest['path'])))
                     if unicorn['xy'] != walk_dest['xy']: continue
-                    load_move = { 'x_coordinate': ldable['x_coordinate'],
-                                  'y_coordinate': ldable['y_coordinate'],
-                                  '__unit_name': ldable['unit_name'], '__unit_action': 'load',
-                                  'unit_action': 'load', 'movements': [ {
-                                      "xCoordinate": p['x'], "yCoordinate": p['y'],
-                                      '__walkcost': walk_cost(ldable['unit_name'], p['terrain_name']),
-                                      '__terrain': p['terrain_name'] } for p in walk_dest['path'] ]}
+                    if DBG_UNICORN_LOADING:
+                        DBGPRINT('walkdest: {} + {}'.format(
+                            pathstr(walk_dest['path']), tilestr(walk_dest)))
+                    walk_dest['path'].append(walk_dest)
+                    if DBG_UNICORN_LOADING:
+                        DBGPRINT('unloaded unicorn {}: {} walk to {} via {}'.format(
+                            tilestr(unit), tilestr(ldable), tilestr(walk_dest),
+                            pathstr(walk_dest['path'])))
+                    load_move = {
+                        'x_coordinate': ldable['x_coordinate'],
+                        'y_coordinate': ldable['y_coordinate'],
+                        '__unit_name': ldable['unit_name'], '__unit_action': 'load',
+                        'unit_action': 'load', 'movements': [ {
+                            "xCoordinate": p['x'], "yCoordinate": p['y'],
+                            '__walkcost': walk_cost(ldable['unit_name'], p['terrain_name']),
+                            '__terrain': p['terrain_name'] } for p in walk_dest['path'] ]}
                     if cache_move(mkres(move=load_move), moves):
-                        if DBG_MOVES:
+                        if DBG_MOVES or DBG_UNICORN_LOADING:
                             DBGPRINT('unloaded unicorn found: {} -- loading {} via {}'.format(
                                 tilestr(unit), tilestr(ldable), pathstr(walk_dest['path'])))
                         return mkres(move=load_move)
@@ -713,7 +731,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
 
             # unload unicorn after move
             if is_loaded_unicorn(unit):
-                valid_neighbors = [nbr for nbr in xyneighbors(dest) if
+                valid_neighbors = [nbr for nbr in immed_nbrs(dest) if
                                    nbr['unit_name'] is None and
                                    nbr['terrain_name'] in WALKABLE_TERRAIN]
                 for nbr in valid_neighbors:
@@ -723,7 +741,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                         '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                         'unit_action': 'unloadSlot1' })
                     if cache_move(mkres(move=unload_move), moves):
-                        if DBG_MOVES: DBGPRINT('loaded, moved unicorn {} => {}, unload to {}'.format(
+                        if DBG_MOVES or DBG_UNICORN_LOADING:
+                            DBGPRINT('loaded, moved unicorn {} => {}, unload to {}'.format(
                                 tilestr(unit), tilestr(dest), tilestr(nbr)))
                         return mkres(move=unload_move)
             
@@ -831,7 +850,7 @@ def enumerate_all_moves(player_id, army_id, game_info, players, compute_score=Tr
         DBGPRINT('{} {} done queuing moves - returning.'.format(worker_num, os.getpid()))
 
 def abbr_move_json(move):
-    res = json.dumps(move)
+    res = json.dumps(move, sort_keys=True)
     res = res.replace('{"status": "success", "data": {', '')
     res = res.replace(', "status": "success"}', '')
     res = re.sub(r'(, |{)"(purchase|end_turn|move)": false', '', res)
@@ -943,12 +962,13 @@ def select_next_move(player_id, game_info, preparsed=False):
         min_score = min(min_score, move['__score'])
     sum_scores -= min_score * len(moves)
     sum_score_wt = 0.0
-    for move in moves.values():
-        move['__score_wt'] = max(0.0, (move['__score']-min_score) / sum_scores)
+    for move in sorted(moves.values(), key=lambda mv: mv['__score']):
+        # round is for pretty printing...
+        move['__score_wt'] = round(max(0.0, (move['__score']-min_score) / sum_scores), 4)
         sum_score_wt += move['__score_wt']
 
     movekeys = list(moves.keys())
-    mvkey = numpy.random.choice(
+    mvkey = numpy.random.choice(   # pylint:disable=E1101
         movekeys, p=[ moves[movekey]['__score_wt']/sum_score_wt for movekey in movekeys ])
                                 
     if DBG_MOVES:
@@ -956,7 +976,7 @@ def select_next_move(player_id, game_info, preparsed=False):
             len(moves), "\n".join(["{}{}".format(
                 ("=> " if mvkey == key else ""),
                 abbr_move_json(moves[key])) for key in sorted(
-                    moves.keys(), key=lambda mv: json.dumps(moves[mv]))])))
+                    moves.keys(), key=lambda mvkey: moves[mvkey]['__score'])])))
     if len(moves) == 1:
         DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
         DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
@@ -1078,9 +1098,7 @@ def apply_move(army_id, tiles_by_idx, move):
             'unit_team_name': 'foo', 'fuel': '100',
             'primary_ammo': '100', 'secondary_ammo': '100',
         })
-        del src_tile['slot1_deployed_unit_id']
-        del src_tile['slot1_deployed_unit_name']
-        del src_tile['slot1_deployed_unit_health']
+        del_loaded_unit(src_tile)
         return True
 
     if movemove.get('unit_action', 'simplemove') == 'load':
@@ -1089,16 +1107,14 @@ def apply_move(army_id, tiles_by_idx, move):
         if is_loaded_unicorn(dest_tile):
             return mverr("can't load Unicorn that's already loaded: {}".format(
                 tilestr(dest_tile, True)))
-        if dest_tile['unit_name'] not in LOADABLE_UNITS:
-            return mverr("can't this type of unit: {}".format(
-                tilestr(dest_tile, True)))
-        move_unit(src_tile, dest_tile)
-        load_xyidx = int(movemove['x_coord_action'])*1000 + int(movemove['y_coord_action'])
-        update_tile_with_dict(tiles_by_idx[load_xyidx], {
+        if src_tile['unit_name'] not in LOADABLE_UNITS:
+            return mverr("can't load this type of unit: {}".format(
+                tilestr(src_tile, True)))
+        update_tile_with_dict(dest_tile, {
             'slot1_deployed_unit_id': dest_tile['unit_id'],
             'slot1_deployed_unit_name': dest_tile['unit_name'],
             'slot1_deployed_unit_health': dest_tile['health'] })
-        del_unit(dest_tile)
+        del_unit(src_tile)
         return True
 
     if movemove.get('unit_action', 'simplemove') == 'join':
@@ -1111,9 +1127,8 @@ def apply_move(army_id, tiles_by_idx, move):
         if is_loaded_unicorn(dest_tile):
             return mverr("attempted to join to Unicorn that's already loaded: {}".format(
                 tilestr(dest_tile, True)))
-        health = min(int(dest_tile['health']) + int(src_tile['health']), 100)
-        move_unit(src_tile, dest_tile)
-        dest_tile['health'] = health
+        dest_tile['health'] = min(int(dest_tile['health']) + int(src_tile['health']), 100)
+        del_unit(src_tile)
         return True
 
     if movemove.get('unit_action', 'simplemove') == 'capture':
@@ -1153,7 +1168,8 @@ def apply_move(army_id, tiles_by_idx, move):
         return True
 
     # simple movement
-    move_unit(src_tile, dest_tile)
+    if len(movemove['movements']) > 0:
+        move_unit(src_tile, dest_tile)
     return True
 
 def attack_strength(unit):

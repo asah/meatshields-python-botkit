@@ -21,42 +21,30 @@
       "turn_order": "1" } },
   "speed": "0",
   "__tilemap": [
-    "tpppptfporoftppppT",
-    "pcrrcrroororrcrrCP",
-    "prpppptporotpppPRP",
-    "srpoooooooooooOPRS",
-    "srpooooooooooOOPRS",
-    "srpoooooooooOOOPRS",
-    "srpoooooooooOOOPRS",
-    "srcssssppppssSSCRS",
-    "tchrrfrrrrrrfrRHCT",
-    "ctpssssppppssssPTC"
+    "ROROR",
+    "ROROR",
+    "ROROR",
+    "OHOHO"
   ],
   "tiles": [
     [
-      { "xy": "9,0",
-        "deployed_unit_id": "9900", "fuel": "70", "health": "100", "primary_ammo": "3", "secondary_ammo": "100", "capture_remaining": "0", "moved": "0",
-        "unit_army_id": "1", "unit_army_name": "Tiger", "unit_id": "2", "unit_name": "Unicorn", "unit_team_name": "teamB" },
-      
-      { "xy": "9,1",
-	"deployed_unit_id": "9901", "fuel": "70", "health": "100", "primary_ammo": "3", "secondary_ammo": "100", "capture_remaining": "0", "moved": "0",
-        "unit_army_id": "1", "unit_army_name": "Tiger", "unit_id": "2", "unit_name": "Knight", "unit_team_name": "teamB"  },
+      { "__comment": "load from 1 tile away, against border" },
+      { "xy": "0,0", "unit_army_id": "1", "unit_name": "Unicorn" },
+      { "xy": "0,1", "unit_army_id": "1", "unit_name": "Knight"  },
 
+      { "__comment": "load from 1 tiles away, center" },
+      { "xy": "2,1", "unit_army_id": "1", "unit_name": "Unicorn" },
+      { "xy": "2,2", "unit_army_id": "1", "unit_name": "Knight"  },
+
+      { "__comment": "load from 2 tiles away" },
+      { "xy": "4,0", "unit_army_id": "1", "unit_name": "Unicorn" },
+      { "xy": "4,2", "unit_army_id": "1", "unit_name": "Knight"  },
+
+      { "__comment": "load from 2 tiles away" },
+      { "xy": "1,3", "building_army_id": "1", "terrain_name": "Headquarters"  },
+      { "xy": "3,3", "building_army_id": "2", "terrain_name": "Headquarters"  },
 
       { "__ignore_start": true },
-      
-      { "xy": "11,0", "__ignore": true,
-	"deployed_unit_id": "9900", "fuel": "70", "health": "100", "primary_ammo": "3", "secondary_ammo": "100", "capture_remaining": "0", "moved": "1", "slot1_deployed_unit_name": "Knight",
-        "unit_army_id": "1", "unit_army_name": "Tiger", "unit_id": "2", "unit_name": "Unicorn", "unit_team_name": "teamB" },
-      
-      { "xy": "13,0", "__ignore": true,
-	"deployed_unit_id": "9900", "fuel": "70", "health": "50", "primary_ammo": "3", "secondary_ammo": "100", "capture_remaining": "0", "moved": "1", 
-        "unit_army_id": "1", "unit_army_name": "Tiger", "unit_id": "2", "unit_name": "Unicorn", "unit_team_name": "teamB" },
-      
-      { "xy": "13,1", "__ignore": true,
-	"deployed_unit_id": "9900", "fuel": "70", "health": "50", "primary_ammo": "3", "secondary_ammo": "100", "capture_remaining": "0", "moved": "1", 
-        "unit_army_id": "1", "unit_army_name": "Tiger", "unit_id": "2", "unit_name": "Unicorn", "unit_team_name": "teamB" },
-
       { "__ignore_end": true }
     ]
   ],

@@ -9,7 +9,6 @@ def main():
     player_id = str(jsondata['botPlayerId'])
     game_info = jsondata['gameInfo']
     random.seed()
-    #bblib.DBGPRINT = lambda msg: True
     move = bblib.select_next_move(player_id, game_info)
     print("move:\n{}".format(bblib.compact_json_dumps(move)))
 
