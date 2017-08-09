@@ -964,7 +964,8 @@ def select_next_move(player_id, game_info, preparsed=False):
     sum_score_wt = 0.0
     for move in sorted(moves.values(), key=lambda mv: mv['__score']):
         # round is for pretty printing...
-        move['__score_wt'] = round(max(0.0, (move['__score']-min_score) / sum_scores), 4)
+        move['__score_wt'] = 0.001 if sum_scores < 0.001 else \
+                             round(max(0.0, (move['__score']-min_score) / sum_scores), 4)
         sum_score_wt += move['__score_wt']
 
     movekeys = list(moves.keys())

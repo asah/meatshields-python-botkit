@@ -1,4 +1,4 @@
-{ "botPlayerId": 1529, "gameInfo": { "current_turn": "2",
+{ "botPlayerId": 1529, "gameInfo": { "current_turn": "1",
   "day": "5",
   "fog": "1",
   "game_id": "100000",
@@ -34,14 +34,11 @@
   ],
   "tiles": [
     [
-      { "building_army_id": "2", "building_army_name": "Wolf", "building_team_name": "teamA",
-        "xy": "0,9" },
-      { "building_army_id": "2", "building_army_name": "Wolf", "building_team_name": "teamA",
-        "xy": "1,8" },
-      { "building_army_id": "1", "building_army_name": "Tiger", "building_team_name": "teamB",
-        "xy": "16,8" },
-      { "building_army_id": "1", "building_army_name": "Tiger", "building_team_name": "teamB",
-        "xy": "17,9" }
+      { "xy": "0,9", "building_army_id": "1", "terrain_name": "Headquarters" },
+      { "xy": "1,8", "building_army_id": "1", "terrain_name": "Headquarters" },
+      { "xy": "16,8", "building_army_id": "2", "terrain_name": "Headquarters" },
+      { "xy": "17,9", "building_army_id": "2", "terrain_name": "Headquarters" },
+      { "__comment": "" }
     ]
   ],
   "time_now": "2017-07-30 20:28:33",

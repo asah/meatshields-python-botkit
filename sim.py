@@ -16,7 +16,7 @@ def take_turn(jsondata):
     bblib.set_fog_values(player_id, bblib.TILES_BY_IDX)
     jsondata['gameInfo']['__unitmap'] = bblib.unitmap_list(bblib.TILES_BY_IDX.values(), player_id)
     random.seed()
-    move = bblib.select_next_move(str(player_id), jsondata['gameInfo'], preparsed=True)
+    move = bblib.select_next_move(player_id, jsondata['gameInfo'], preparsed=True)
     print("move: \n{}".format(bblib.compact_json_dumps(move)))
     return move
 
@@ -27,17 +27,20 @@ def main():
     bblib.parse_map(1, game_info['tiles'], game_info)
     MASTER_TILES_BY_IDX = copy.deepcopy(bblib.TILES_BY_IDX)
     game_info['__tilemap'] = bblib.tilemap_list(MASTER_TILES_BY_IDX.values())
-    player_turn = 1
+    player_turn_idx = 0
     num_players = len(game_info['players'])
     while True:
-        for player_info in game_info['players'].values():
-            if player_info['turn_order'] == str(player_turn):
+        for idx, player_info in enumerate(game_info['players'].values()):
+            if str(player_turn_idx+1) == player_info['turn_order']:
+                print("player_turn_idx: {}".format(player_turn_idx+1))
                 player_id = jsondata['botPlayerId'] = int(player_info['player_id'])
                 army_id = player_info.get(str(player_id), {}).get('army_id', '')
-                move = take_turn(jsondata)
-                if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, move):
-                    break
-            player_turn = ((player_turn + 1) % num_players) + 1
+                while True:
+                    move = take_turn(jsondata)
+                    print(move)
+                    if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, move):
+                        break
+            player_turn_idx = (player_turn_idx + 1) % num_players
 
 if __name__ == '__main__':
     main()
