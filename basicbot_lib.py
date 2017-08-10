@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # pylint:disable=locally-disabled,fixme,bad-whitespace,missing-docstring,multiple-imports,global-statement,multiple-statements,no-self-use,too-few-public-methods,
 #
@@ -19,6 +19,7 @@ DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
 DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
 DBG_TIMING = (os.environ.get('DBG_TIMING', '1') == '1')
+DBG_PARSE_TIMING = (os.environ.get('DBG_PARSE_TIMING', '1') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
@@ -26,6 +27,7 @@ DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
 DBG_SCORING = (os.environ.get('DBG_SCORING', '0') == '1')
 DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
+DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 
 # max combined health before we no longer consider joining two units
 # set to relatively high, so AI can uncover clever strategies
@@ -200,11 +202,11 @@ def compact_json_dumps(data):
             r'\3\2\1', compact_response)
 
     # keep y-xxx on the same line as x---
-    compact_response = re.sub(r'(?m)\r?\n +"(yCoord|y_coord)', r' "\1', compact_response)
+    compact_response = re.sub(r'(?m)\r?\n +"([yx]Coord|y_coord)', r' "\1', compact_response)
     # keep __unit_name on the same line as  __unit_action
     # keep building_army_name and building_team_name on the same line as building_army_id
     compact_response = re.sub(
-        r'(?m)\r?\n +"(__unit_name|__walkcost|building_army_name|building_team_name|'+
+        r'(?m)\r?\n +"(__unit_[_a-z]+|__walkcost|building_army_name|building_team_name|'+
         r'health|secondary_ammo|unit_army_name|unit_id|unit_name|unit_team_name|response_msec)',
         r' "\1', compact_response)
     return compact_response
@@ -897,7 +899,7 @@ def select_next_move(player_id, game_info, preparsed=False):
         DBGPRINT("\n".join(["{}: {}".format(name, typ) for name, typ in
                             sorted(UNIT_SHORTCODES.items())]))
     start_time = datetime.datetime.now()
-    if DBG_TIMING:
+    if DBG_PARSE_TIMING:
         parse_time = datetime.datetime.now() - start_time
         DBGPRINT('JSON parse time: {}'.format(msec(parse_time)))
 
@@ -968,7 +970,11 @@ def select_next_move(player_id, game_info, preparsed=False):
 
     sum_scores = 0.0
     min_score = 999999999
-    for move in moves.values():
+    if len(moves) > 1:
+        for mvkey in list(moves.keys()):
+            if moves[mvkey]['data']['end_turn']:
+                del moves[mvkey]
+    for mvkey, move in moves.items():
         if '__score' not in move:
             move['__score'] = score_move(army_id, TILES_BY_IDX, player_info, move)
         sum_scores += move['__score']
@@ -1225,8 +1231,10 @@ def score_position(army_id, tiles_by_idx, move=None):
     production_capacity = len(MY_CASTLES) + len(MY_TOWNS)
     num_my_units = len(MY_UNITS)
     # scale to assuming 10 units before overwhelming other factors
-    sum_attack_strength = int(sum([attack_strength(unit)/10.0 for unit in MY_UNITS]))
-    sum_defense_strength = int(sum([defense_strength(unit)/10.0 for unit in MY_UNITS]))
+    sum_attack_strength = int(sum([attack_strength(unit)*unit_health(unit)/1000.0
+                                   for unit in MY_UNITS]))
+    sum_defense_strength = int(sum([defense_strength(unit)*unit_health(unit)/1000.0
+                                    for unit in MY_UNITS]))
     # square the score to skew move choice to better moves...
     score = num_my_units * 10 + production_capacity * 10 + pct_visible + \
             sum_attack_strength + sum_defense_strength
@@ -1247,4 +1255,12 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         DBGPRINT("bad move {}: skipping...".format(move))
         return 0
     return score_position(army_id, tiles_by_idx, move)
+    
+def initialize_player_turn(army_id, tiles_by_idx, player_info, game_state):
+    game_state['botPlayerId'] = int(player_info['player_id'])
+    player_info['funds'] = int(player_info.get('funds', 0)) + new_funds(army_id, tiles_by_idx)
+    for tile in tiles_by_idx.values():
+        tile['moved'] = '0'
+
+    
     
