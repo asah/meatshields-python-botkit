@@ -23,7 +23,7 @@ DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
 DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
-DBG_SCORING = (os.environ.get('DBG_SCORING', '1') == '1')
+DBG_SCORING = (os.environ.get('DBG_SCORING', '0') == '1')
 DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 
@@ -47,9 +47,9 @@ DBGPRINT = dbgprint
 
 def mkres(**args):
     """ e.g. mkres(move={"x_coordinates": ... }) """
-    res = { "purchase": False, "end_turn": False, "move": False }
+    res = { 'purchase': False, 'end_turn': False, 'move': False }
     res.update(args)
-    return { "status": "success", "data": res }
+    return { 'status': 'success', 'data': res }
 
 
 # others are borders and ignored: Ocean, Reef
@@ -209,6 +209,18 @@ def compact_json_dumps(data):
         r' "\1', compact_response)
     return compact_response
 
+def is_null_move(move):
+    data = move['data']
+    if data['end_turn']: return True
+    if data['purchase']: return False
+    movemove = data['move']
+    if movemove:
+        if 'x_coord_attack' in movemove: return False
+        if movemove.get('unit_action') in ['load', 'unloadSlot1']: return False
+        if len(movemove['movements']) == 0: return True
+    DBGPRINT("unknown action: {}".format(move))
+    return True             # shouldn't happen
+
 def pathstr(path, show_terrain=False):
     if path is None: return "{}"
     if len(path) == 0: return "[]"
@@ -226,7 +238,7 @@ def tilestr(tile, show_details=False):
     army #5 units are printed is like this: UNIC.
     show_details=True is meant for one-line-per-tile output"""
     # TODO: show_details
-    if tile['unit_name'] in [None, ""]:
+    if tile.get('unit_name') in [None, ""]:
         unit_name = "----"
     else:
         unit_name = tile['unit_name'][0:4]
@@ -253,7 +265,7 @@ def movestr(move):
         if 'x_coord_attack' in movemove:
             postmove_action = " attack {},{}".format(
                 movemove['x_coord_attack'], movemove['y_coord_attack'])
-        elif movemove['__unit_action'] == "unload":
+        elif movemove.get('unit_action') == "unloadSlot1":
             postmove_action = " unload to {},{}".format(
                 movemove['x_coord_action'], movemove['y_coord_action'])
         else:
@@ -318,7 +330,7 @@ def walkable_tiles(tile, army_id, unit_tile, cost_remaining, path):
                            # revisit tiles only if there's greater walking range left
                            cost_remaining > nbr.get('seen', 0) and
                            # walk over friends but not enemies
-                           nbr['unit_army_id'] in [None, army_id]]
+                           nbr.get('unit_army_id') in [None, army_id]]
     if DBG_MOVEMENT:
         DBGPRINT('immediate neighbors of {}: {}, path:{}, moves left:{}'.format(
             tilestr(tile), pathstr(immediate_neighbors), pathstr(path),
@@ -677,8 +689,9 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         unit_max_move = 6 if is_loaded_unicorn(unit) else unit['unit_type']['move']
         neighbors = walkable_tiles(unit, army_id, unit, unit_max_move, [])
         # only include our own units if joinable
-        neighbors = [nbr for nbr in neighbors if nbr['unit_army_id'] is None or
-                     (nbr['unit_army_id'] == army_id and nbr['unit_name'] == unit['unit_name'] and
+        neighbors = [nbr for nbr in neighbors if nbr.get('unit_army_id') is None or
+                     (nbr.get('unit_army_id') == army_id and
+                      nbr.get('unit_name') == unit['unit_name'] and
                       not is_loaded_unicorn(nbr) and not is_loaded_unicorn(unit) and
                       unit_health(nbr) + unit_health(unit) <= MAX_JOIN_THRESHOLD ) ]
         # not moving is a valid choice
@@ -713,7 +726,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                                      for p in (dest['path'] + [dest])] })
 
             # join units
-            if (dest['xy'] != unit['xy'] and dest['unit_army_id'] == army_id and
+            if (dest['xy'] != unit['xy'] and dest.get('unit_army_id') == army_id and
                 dest['unit_name'] == unit['unit_name']):
                 dbg_nbrs.append("join units for {}, move={}:".format(
                     tilestr(unit), unit_max_move))
@@ -796,7 +809,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     funds = int(my_info['funds'])
     for castle in my_castles_by_dist:
         if dbg_force_tile not in ['', castle['xy']]: continue
-        if castle['unit_army_id'] is None and funds >= 1000:
+        if castle.get('unit_army_id') is None and funds >= 1000:
             unit_types = [k for k,v in UNIT_TYPES.items() if v['cost'] <= funds]
             for newunit in unit_types:
                 res = mkres(purchase = {
@@ -1003,11 +1016,14 @@ def select_next_move(player_id, game_info, preparsed=False):
     return move
 
 def player_units(army_id, tiles_by_idx):
-    return [tile for tile in tiles_by_idx.values() if
-            tile.get('unit_name') is not None and tile['unit_army_id'] == army_id]
+    return [tile for tile in tiles_by_idx.values() if tile.get('unit_army_id') == army_id]
+            
+def player_bldgs(army_id, tiles_by_idx):
+    return [tile for tile in tiles_by_idx.values() if tile.get('building_army_id') == army_id]
 
 def set_fog_values(army_id, tiles_by_idx):
     my_units = player_units(army_id, tiles_by_idx)
+    my_bldgs = player_bldgs(army_id, tiles_by_idx)
     num_visible = 0
     for tile in tiles_by_idx.values():
         tile['in_fog'] = "1"
@@ -1018,15 +1034,16 @@ def set_fog_values(army_id, tiles_by_idx):
                 break
         if tile['in_fog'] == "1":
             newtile = dict( (key, val) for key, val in tile.items() if key in [
-                'xy', 'xystr', 'terrain_name', 'x_coordinate', 'y_coordinate', 'x', 'y',
-                'defense', 'in_fog'])
+                'xy', 'xystr', 'xyidx', 'x_coordinate', 'y_coordinate', 'x', 'y',
+                'terrain_name', 'defense', 'in_fog'])
             tile.clear()
             tile.update(newtile)
+    for tile in my_bldgs:
+        tile['in_fog'] = "0"
     return num_visible
 
 def new_funds(army_id, tiles_by_idx):
-    my_units = player_units(army_id, tiles_by_idx)
-    return len([unit for unit in my_units if
+    return len([unit for unit in player_bldgs(army_id, tiles_by_idx) if
                 unit['terrain_name'] in CAPTURABLE_TERRAIN]) * 1000
 
 
@@ -1135,7 +1152,7 @@ def apply_move(army_id, tiles_by_idx, move):
     if movemove.get('unit_action', 'simplemove') == 'capture':
         if dest_tile['terrain_name'] not in CAPTURABLE_TERRAIN:
             return mverr("terrain can't be captured: {}".format(tilestr(dest_tile, True)))
-        if dest_tile['unit_name'] not in CAPTURING_UNITS:
+        if dest_tile.get('unit_name') not in CAPTURING_UNITS:
             return mverr("unit can't capture: {}".format(tilestr(dest_tile, True)))
         if is_my_building(dest_tile, army_id):
             return mverr("tile already captured: {}".format(tilestr(dest_tile, True)))

@@ -34,10 +34,12 @@
   ],
   "tiles": [
     [
-      { "xy": "0,9", "building_army_id": "1", "terrain_name": "Headquarters" },
-      { "xy": "1,8", "building_army_id": "1", "terrain_name": "Headquarters" },
-      { "xy": "16,8", "building_army_id": "2", "terrain_name": "Headquarters" },
-      { "xy": "17,9", "building_army_id": "2", "terrain_name": "Headquarters" },
+      { "xy": "0,9", "building_army_id": "1", "terrain_name": "Castle" },
+      { "xy": "1,8", "building_army_id": "1", "terrain_name": "Castle" },
+      { "xy": "2,8", "building_army_id": "1", "terrain_name": "Headquarters" },
+      { "xy": "15,8", "building_army_id": "2", "terrain_name": "Headquarters" },
+      { "xy": "16,8", "building_army_id": "2", "terrain_name": "Castle" },
+      { "xy": "17,9", "building_army_id": "2", "terrain_name": "Castle" },
       { "__comment": "" }
     ]
   ],
