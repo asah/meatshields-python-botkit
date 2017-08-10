@@ -1150,15 +1150,16 @@ def apply_move(army_id, tiles_by_idx, move):
         return True
 
     if movemove.get('unit_action', 'simplemove') == 'capture':
+        if src_tile.get('unit_name') not in CAPTURING_UNITS:
+            return mverr("unit can't capture: {}".format(tilestr(src_tile, True)))
         if dest_tile['terrain_name'] not in CAPTURABLE_TERRAIN:
             return mverr("terrain can't be captured: {}".format(tilestr(dest_tile, True)))
-        if dest_tile.get('unit_name') not in CAPTURING_UNITS:
-            return mverr("unit can't capture: {}".format(tilestr(dest_tile, True)))
         if is_my_building(dest_tile, army_id):
             return mverr("tile already captured: {}".format(tilestr(dest_tile, True)))
         capture_remaining = dest_tile.get('capture_remaining', 20)
         if capture_remaining is None: capture_remaining = 20
-        capture_remaining = max(0, capture_remaining - int(10.0 * dest_tile['health'] / 100.0))
+        DBGPRINT(src_tile)
+        capture_remaining = max(0, capture_remaining - int(10.0 * src_tile['health'] / 100.0))
         move_unit(src_tile, dest_tile)
         dest_tile['capture_remaining'] = str(capture_remaining)
         if capture_remaining == 0:
