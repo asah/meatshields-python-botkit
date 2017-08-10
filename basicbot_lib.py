@@ -11,7 +11,7 @@
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
-import re, os, copy, datetime, json, time, numpy
+import re, os, copy, datetime, json, time, numpy, random
 from multiprocessing import Process, Manager
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
@@ -47,6 +47,11 @@ def dbgprint(msg):
 
 DBGPRINT = dbgprint
 
+def set_random_seed(val=1337):
+    """reproducibility."""
+    random.seed(val)
+    numpy.random.seed(val)
+    
 def mkres(**args):
     """ e.g. mkres(move={"x_coordinates": ... }) """
     res = { 'purchase': False, 'end_turn': False, 'move': False }
@@ -206,7 +211,7 @@ def compact_json_dumps(data):
     # keep __unit_name on the same line as  __unit_action
     # keep building_army_name and building_team_name on the same line as building_army_id
     compact_response = re.sub(
-        r'(?m)\r?\n +"(__unit_[_a-z]+|__walkcost|building_army_name|building_team_name|'+
+        r'(?m)\r?\n +"(__unit_[_a-z]+|__walkcost|__score_wt|building_army_name|building_team_name|'+
         r'health|secondary_ammo|unit_army_name|unit_id|unit_name|unit_team_name|response_msec)',
         r' "\1', compact_response)
     return compact_response
@@ -635,8 +640,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
         # all in one turn
         if is_loaded_unicorn(unit):
-            valid_neighbors = [nbr for nbr in immed_nbrs(unit) if
-                               nbr['unit_name'] is None and nbr['terrain_name'] in WALKABLE_TERRAIN]
+            valid_neighbors = [nbr for nbr in immed_nbrs(unit) if nbr.get('unit_name') is None and
+                               nbr['terrain_name'] in WALKABLE_TERRAIN]
             for nbr in valid_neighbors:
                 unload_move = {
                     'x_coordinate': unit['x_coordinate'], 'y_coordinate': unit['y_coordinate'],

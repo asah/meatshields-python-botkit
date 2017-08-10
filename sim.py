@@ -8,7 +8,7 @@ DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 
 MASTER_TILES_BY_IDX = None
 
-def take_turn(jsondata):
+def take_turn(movenum, jsondata):
     """returns move"""
     player_id = str(jsondata['botPlayerId'])
     player_info = jsondata['gameInfo']['players'][player_id]
@@ -19,13 +19,15 @@ def take_turn(jsondata):
     bblib.parse_tiles_by_idx(army_id, bblib.TILES_BY_IDX)
     bblib.set_fog_values(army_id, bblib.TILES_BY_IDX)
     jsondata['gameInfo']['__unitmap'] = bblib.unitmap_list(bblib.TILES_BY_IDX.values(), player_id)
-    random.seed()
     move = bblib.select_next_move(player_id, jsondata['gameInfo'], preparsed=True)
-    print("move: \n{}".format(bblib.compact_json_dumps(move)))
+    print("move #{}: \n{}".format(movenum, bblib.compact_json_dumps(move)))
     return move
 
 def main():
     global MASTER_TILES_BY_IDX
+    seed = random.randint(0, 10000000)
+    print("random seed: ".format(seed))
+    bblib.set_random_seed(seed)
     game_state = json.loads(open('test_blank_board.json').read())
     game_info = game_state['gameInfo']
     bblib.parse_map(1, game_info['tiles'], game_info)
@@ -43,6 +45,7 @@ def main():
         turns[army_id] = []
         resigned[army_id] = False
     player_turn_idx = 0
+    movenum = 0
     while True:
         player_info = player_info_dict[player_turn_idx+1]
         army_id = player_info['army_id']
@@ -53,7 +56,7 @@ def main():
             if DBG_GAME_STATE:
                 print("army_id={}  player_turn_idx={}  funds={}".format(
                     army_id, player_turn_idx+1, player_info['funds']))
-            move = take_turn(game_state)
+            move = take_turn(len(turns[army_id]), game_state)
             turns[army_id][-1].append(move)
             if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move):
                 # TODO: other ways to win/lose

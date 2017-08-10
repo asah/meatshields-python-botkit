@@ -21,8 +21,8 @@ API = Api(APP)
 DBGPRINT = APP.logger.debug
 
 @APP.before_request
-def set_random_seed():
-    random.seed(1337)   # reproducibility
+def set_random_seed(val=1337):
+    bblib.set_random_seed(val)
 
 class Heartbeat(Resource):
     def post(self):
