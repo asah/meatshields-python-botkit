@@ -10,8 +10,6 @@ def take_turn(jsondata):
     player_id = str(jsondata['botPlayerId'])
     player_info = jsondata['gameInfo']['players'][player_id]
     army_id = player_info['army_id']
-    player_info['funds'] = int(player_info.get('funds', 0)) + \
-                           bblib.new_funds(army_id, MASTER_TILES_BY_IDX)
     print("taking turn for player_id={}: funds={}".format(player_id, player_info['funds']))
     bblib.TILES_BY_IDX = copy.deepcopy(MASTER_TILES_BY_IDX)
     bblib.parse_tiles_by_idx(army_id, bblib.TILES_BY_IDX)
@@ -24,8 +22,8 @@ def take_turn(jsondata):
 
 def main():
     global MASTER_TILES_BY_IDX
-    jsondata = json.loads(open('test_blank_board.json').read())
-    game_info = jsondata['gameInfo']
+    game_state = json.loads(open('test_blank_board.json').read())
+    game_info = game_state['gameInfo']
     bblib.parse_map(1, game_info['tiles'], game_info)
     MASTER_TILES_BY_IDX = copy.deepcopy(bblib.TILES_BY_IDX)
     game_info['__tilemap'] = bblib.tilemap_list(MASTER_TILES_BY_IDX.values())
@@ -43,15 +41,18 @@ def main():
     player_turn_idx = 0
     while True:
         player_info = player_info_dict[player_turn_idx+1]
+        game_state['botPlayerId'] = int(player_info['player_id'])
+        player_info['funds'] = int(player_info.get('funds', 0)) + \
+                               bblib.new_funds(army_id, MASTER_TILES_BY_IDX)
         army_id = player_info['army_id']
         if resigned[army_id]: break
         turns[army_id].append([])
-        player_id = jsondata['botPlayerId'] = int(player_info['player_id'])
-        print("army_id={}  player_turn_idx={}".format(army_id, player_turn_idx+1))
         while True:
-            move = take_turn(jsondata)
+            print("army_id={}  player_turn_idx={}  funds={}".format(
+                army_id, player_turn_idx+1, player_info['funds']))
+            move = take_turn(game_state)
             turns[army_id][-1].append(move)
-            if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, move):
+            if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move):
                 # TODO: other ways to win/lose
                 if len(turns[army_id]) > 1 and len(turns[army_id][-1]) == 1:
                     if turns[army_id][-2][-1]['data']['end_turn']:
@@ -62,6 +63,8 @@ def main():
                                     print("winner: army_id={}".format(army_id))
                                     sys.exit(0)
                 break
+            print("army_id={}  player_turn_idx={}  funds={}".format(
+                army_id, player_turn_idx+1, player_info['funds']))
         player_turn_idx = (player_turn_idx + 1) % num_players
 
 if __name__ == '__main__':

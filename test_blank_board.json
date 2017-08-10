@@ -6,7 +6,7 @@
   "num_players": "2",
   "players": { "1529": { "army_id": "1",
       "army_name": "Tiger",
-      "funds": "4000",
+      "funds": "0",
       "last_active_day": "5",
       "lost": "0",
       "player_id": "1529",
