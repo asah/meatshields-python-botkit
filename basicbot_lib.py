@@ -19,7 +19,7 @@ DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
 DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
 DBG_TIMING = (os.environ.get('DBG_TIMING', '1') == '1')
-DBG_PARSE_TIMING = (os.environ.get('DBG_PARSE_TIMING', '1') == '1')
+DBG_PARSE_TIMING = (os.environ.get('DBG_PARSE_TIMING', '0') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
@@ -33,7 +33,7 @@ DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 # set to relatively high, so AI can uncover clever strategies
 MAX_JOIN_THRESHOLD = int(os.environ.get('DBG_STATS', '150'))
 
-PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '1') == '1')
+PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '0') == '1')
 DBG_PARALLEL_MOVE_DISCOVERY = (os.environ.get('DBG_PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
 APP = API = None
@@ -202,7 +202,7 @@ def compact_json_dumps(data):
             r'\3\2\1', compact_response)
 
     # keep y-xxx on the same line as x---
-    compact_response = re.sub(r'(?m)\r?\n +"([yx]Coord|y_coord)', r' "\1', compact_response)
+    compact_response = re.sub(r'(?m)\r?\n +"([xy]Coord|[xy]_coord)', r' "\1', compact_response)
     # keep __unit_name on the same line as  __unit_action
     # keep building_army_name and building_team_name on the same line as building_army_id
     compact_response = re.sub(
@@ -1211,6 +1211,8 @@ def apply_move(army_id, tiles_by_idx, player_info, move):
     # simple movement
     if len(movemove['movements']) > 0:
         move_unit(src_tile, dest_tile)
+    else:
+        src_tile['moved'] = '1'
     return True
 
 def attack_strength(unit):
