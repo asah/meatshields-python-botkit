@@ -11,7 +11,7 @@
 #
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
-import re, os, copy, datetime, json, time, numpy, random
+import sys, os, re, copy, datetime, json, time, numpy, random
 from multiprocessing import Process, Manager
 
 DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
@@ -28,6 +28,10 @@ DBG_SCORING = (os.environ.get('DBG_SCORING', '0') == '1')
 DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
+
+# pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
+PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '10'))
+if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
 
 # max combined health before we no longer consider joining two units
 # set to relatively high, so AI can uncover clever strategies
@@ -363,6 +367,9 @@ def dist(unit, tile):
     """euclidean distance - used for missile attacks and a (bad) approximation of travel time."""
     return abs(tile['x'] - unit['x']) + abs(tile['y'] - unit['y'])
 
+def max_travel(unit):
+    return 6 if is_loaded_unicorn(unit) else unit['unit_type']['move']
+
 def is_visible(unit, tile):
     distance = dist(unit, tile)
     if tile['terrain_name'] == 'Forest':
@@ -693,7 +700,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         for tile in TILES_BY_IDX.values():
             tile['seen'], tile['path'] = 0, None
         unit['seen'], unit['path'] = 1, []
-        unit_max_move = 6 if is_loaded_unicorn(unit) else unit['unit_type']['move']
+        unit_max_move = max_travel(unit)
         neighbors = walkable_tiles(unit, army_id, unit, unit_max_move, [])
         # only include our own units if joinable
         neighbors = [nbr for nbr in neighbors if nbr.get('unit_army_id') is None or
@@ -846,7 +853,8 @@ def enumerate_all_moves(player_id, army_id, game_info, players, compute_score=Tr
     moves_list = list(moves.values()) + [ {'stop_worker_num': worker_num} ]
     for i, move in enumerate(moves_list):
         if compute_score and move.get('stop_worker_num', '') == '':
-            move['__score'] = score_move(army_id, TILES_BY_IDX, players[player_id], move)
+            move['__score'], move['__score_details'] = score_move(
+                army_id, TILES_BY_IDX, players[player_id], move)
         move_json = json.dumps(move)
         while True:
             try:
@@ -861,7 +869,7 @@ def enumerate_all_moves(player_id, army_id, game_info, players, compute_score=Tr
             else:
                 retry_cnt = 0
                 if DBG_PARALLEL_MOVE_DISCOVERY:
-                    DBGPRINT('{} {} queued move #{} of {}{}'.format(
+                    DBGPRINT('{} {} queued move #{} of {} - {}'.format(
                         worker_num, os.getpid(), i+1, len(moves_list),
                         len(move_json) if move.get('stop_worker_num') is None else 'STOP'))
                 break
@@ -930,12 +938,13 @@ def select_next_move(player_id, game_info, preparsed=False):
     if is_first_move_in_turn(game_info['game_id']):
         DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
         DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
-
-    if PARALLEL_MOVE_DISCOVERY:
+    unmoved_tiles = [unit for unit in (MY_UNITS + MY_CASTLES) if unit.get('moved') != '1']
+    # don't parallelize end_turn
+    if PARALLEL_MOVE_DISCOVERY and len(unmoved_tiles) > 0:
         mpmgr = Manager()
         moves, workers, result_queue = {}, [], mpmgr.Queue()
         # dbg_force_tile also signals a child process, i.e. avoid infinite recursion
-        for unit in (MY_UNITS + MY_CASTLES):
+        for unit in unmoved_tiles:
             if DBG_PARALLEL_MOVE_DISCOVERY:
                 DBGPRINT("opening subprocess for unit: {}".format(tilestr(unit)))
             game_info['dbg_force_tile'] = unit['xy']
@@ -981,27 +990,34 @@ def select_next_move(player_id, game_info, preparsed=False):
                 del moves[mvkey]
     for mvkey, move in moves.items():
         if '__score' not in move:
-            move['__score'] = score_move(army_id, TILES_BY_IDX, player_info, move)
+            move['__score'], move['__score_details'] = score_move(
+                army_id, TILES_BY_IDX, player_info, move)
         sum_scores += move['__score']
         min_score = min(min_score, move['__score'])
     sum_scores -= min_score * len(moves)
-    sum_score_wt = 0.0
-    for move in sorted(moves.values(), key=lambda mv: mv['__score']):
+    sum_top_scores_wt = 0.0
+    # pick from the top 10 moves, to avoid a herd of mediocre moves from competing
+    top_moves = dict(sorted(moves.items(), key=lambda mv: mv[1]['__score'],
+                            reverse=True)[0:PRUNE_TOP_N_MOVES])
+    top_moves_keys = set(top_moves.keys())
+    for mvkey, move in moves.items():
         # round is for pretty printing...
         move['__score_wt'] = 0.001 if sum_scores < 0.001 else \
-                             round(max(0.0, (move['__score']-min_score) / sum_scores), 4)
-        sum_score_wt += move['__score_wt']
+                             round(max(0.0, (move['__score'] - min_score) / sum_scores), 4)
+        if mvkey in top_moves_keys:
+            sum_top_scores_wt += move['__score_wt']
 
-    movekeys = list(moves.keys())
+    movekeys = list(top_moves.keys())
     mvkey = numpy.random.choice(   # pylint:disable=E1101
-        movekeys, p=[ moves[movekey]['__score_wt']/sum_score_wt for movekey in movekeys ])
-                                
+        movekeys, p=[top_moves[movekey]['__score_wt'] / sum_top_scores_wt for movekey in movekeys])
     if DBG_MOVES:
-        DBGPRINT("{} moves available:\n{}".format(
-            len(moves), "\n".join(["{}{}".format(
-                ("=> " if mvkey == key else ""),
-                abbr_move_json(moves[key])) for key in sorted(
-                    moves.keys(), key=lambda mvkey: moves[mvkey]['__score'])])))
+        sorted_moves = sorted(moves.keys(), key=lambda mvkey: moves[mvkey]['__score'],
+                              reverse=True)
+        DBGPRINT("{} moves available, choosing from top {}:\n{}".format(
+            len(moves), PRUNE_TOP_N_MOVES, "\n".join(["{}{}{}".format(
+                ("=> " if mvkey == key else ""), abbr_move_json(moves[key]),
+                moves[mvkey]['__score_details']) for key in sorted_moves])
+        ))
     if len(moves) == 1:
         DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
         DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
@@ -1061,15 +1077,16 @@ def new_funds(army_id, tiles_by_idx):
 UNIT_DICT_KEYS = [ 'unit_army_id', 'unit_army_name', 'unit_id', 'unit_name',  'moved',
                    'unit_team_name', 'health', 'fuel', 'primary_ammo', 'secondary_ammo' ]
 
+def movedict_xyidx(movedict):
+    return int(movedict.get('y_coordinate', movedict.get('yCoordinate', -1)))*1000 + \
+        int(movedict.get('x_coordinate', movedict.get('xCoordinate', -1)))
+
 def apply_move(army_id, tiles_by_idx, player_info, move):
     """added to library, so it can be used for forecasting.
     note: in forecasting mode, unfogging doesn't reveal enemy troops.
     returns False if the move is end_turn."""
     def mverr(msg):
         DBGPRINT("ERROR!  "+msg)
-    def movedict_xyidx(movedict):
-        return int(movedict.get('y_coordinate', movedict.get('yCoordinate', -1)))*1000 + \
-            int(movedict.get('x_coordinate', movedict.get('xCoordinate', -1)))
     def update_tile_with_dict(tile, update_dict):
         tiles_by_idx[tile['xyidx']].update(update_dict)
     def update_tile_with_unit(tile, unit):
@@ -1245,23 +1262,69 @@ def score_position(army_id, tiles_by_idx, move=None):
     # square the score to skew move choice to better moves...
     score = num_my_units * 10 + production_capacity * 10 + pct_visible + \
             sum_attack_strength + sum_defense_strength
-    if DBG_SCORING:
-        DBGPRINT(("score_position: {} = #units*10({}) + prod*10({}) + "+
-                  "%vis({:02d}) + atk({}) + def({}): {}").format(
-                      score, num_my_units * 10, production_capacity * 10, pct_visible,
-                      sum_attack_strength, sum_defense_strength, movestr(move) if move else ""))
-    return score
+    msg = "{} = #units*10({}) + prod*10({}) + %vis({:02d}) + atk({}) + def({}): {}".format(
+        score, num_my_units * 10, production_capacity * 10, pct_visible,
+        sum_attack_strength, sum_defense_strength, movestr(move) if move else "") if \
+        DBG_SCORING else ""
+    return score, msg
+
     
 def score_move(army_id, tiles_by_idx, player_info, move):
     if move.get('stop_worker_num', '') != '':
         return 0
     tiles_by_idx = copy.deepcopy(tiles_by_idx)
     player_info = copy.deepcopy(player_info)
+
+    # TODO: detect HQ capture -- this is to avoid 
+    capturable_tiles = [tile for tile in tiles_by_idx.values()
+                        if tile['terrain_name'] in CAPTURABLE_TERRAIN
+                        and tile.get('building_army_id') != army_id]
+    attackable_units = [tile for tile in tiles_by_idx.values() if
+                        tile.get('unit_army_id') not in [None, army_id]]
+    if len(capturable_tiles) == 0:
+        print("WINNER!  nothing left to capture.  army_id={}".format(army_id))
+        sys.exit(0)
+    
+    # very basic algorithm -- subtly, these rules increase game speed by reducing the search space
+    # - preferring moves which attack nearby enemies
+    # - preferring moves which bring enemies closer together
+    # obviously, this is (highly) suboptimal, but it plays games 10x faster to help accelerate
+    # learning...
+    multiplier = 1.0
+    if move.get('unit_action', '') == 'capture':
+        multiplier *= 1.25
+        # TODO: bonus for completing capture
+        # TODO: bonus for stealing from enemy
+    # bonus for attacking enemy
+    if 'x_coord_attack' in move:
+        multiplier *= 1.25
+        # TODO: bonus for killing enemy
+        # TODO: scale bonus for more damage bec it means they can do less damage to us
+        #  (ideally, scale *that* to damage this partic enemy unit can do to our known
+        #  nearby units)
+    if move['data']['move']:  # ignore false
+        # TODO: bonus for healing injured units
+        src_xyidx = movedict_xyidx(move['data']['move'])
+        src_tile = tiles_by_idx[src_xyidx]
+        unit_max_move = float(max_travel(src_tile))
+        turns_to_dest_tile = {}
+        # can't be empty - see top
+        for dest_tile in capturable_tiles + attackable_units:
+            turns_to_dest_tile[dest_tile['xyidx']] = (
+                dist(src_tile, dest_tile) / unit_max_move)
+        # avg top 3 nearest dests to provide variety vs competition from our other units
+        avg_dist = numpy.average(sorted(turns_to_dest_tile.values())[0:3])
+        multiplier *= 1.0 + (1.0/avg_dist)
+        
     res = apply_move(army_id, tiles_by_idx, player_info, move)
     if res is None:
         DBGPRINT("bad move {}: skipping...".format(move))
         return 0
-    return score_position(army_id, tiles_by_idx, move)
+    base_score, msg = score_position(army_id, tiles_by_idx, move)
+    score = multiplier * base_score
+    if DBG_SCORING:
+        msg = "score: {} = mult({}) * base={}".format(score, multiplier, msg)
+    return score, msg
     
 def initialize_player_turn(army_id, tiles_by_idx, player_info, game_state):
     game_state['botPlayerId'] = int(player_info['player_id'])
