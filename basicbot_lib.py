@@ -752,7 +752,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
             # unload unicorn after move
             if is_loaded_unicorn(unit):
                 valid_neighbors = [nbr for nbr in immed_nbrs(dest) if
-                                   nbr['unit_name'] is None and
+                                   nbr.get('unit_name') is None and
                                    nbr['terrain_name'] in WALKABLE_TERRAIN]
                 for nbr in valid_neighbors:
                     unload_move = copy_move(move, {
