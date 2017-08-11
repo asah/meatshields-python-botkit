@@ -7,11 +7,13 @@ To play the nullbot, visit https://meatshields.com/playUserBot.php and select "n
 To register the nullbot for yourself, visit https://meatshields.com/addUpdateBot.php and add this URL: http://meatshields-nullbot.jewsforbacon.com:5000
 
 # Installing Flask-Restful on Ubuntu 16.04
-pip3 install flask flask-restful
-
 protip: remember to open port 5000 so the meatshields can talk to your bot.
 
 protip: for production use, remember to add your bot to the OS startup scripts, e.g. https://linuxconfig.org/how-to-automatically-execute-shell-script-at-startup-boot-on-systemd-linux
+
+```
+pip3 install flask flask-restful
+```
 
 # Running the bot server
 ```shell
@@ -41,4 +43,11 @@ OK
         "move": false
     }
 }
+```
+
+# Running the server simulator
+This causes basicbot.py to play against itself.
+
+```shell
+./sim.py
 ```
