@@ -26,7 +26,7 @@ def take_turn(movenum, jsondata):
 def main():
     global MASTER_TILES_BY_IDX
     seed = random.randint(0, 10000000)
-    print("random seed: ".format(seed))
+    print("random seed: {}".format(seed))
     bblib.set_random_seed(seed)
     game_state = json.loads(open('test_blank_board.json').read())
     game_info = game_state['gameInfo']
