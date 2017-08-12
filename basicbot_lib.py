@@ -28,6 +28,7 @@ DBG_SCORING = (os.environ.get('DBG_SCORING', '0') == '1')
 DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
+DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
 
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
 PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '4'))
@@ -103,6 +104,7 @@ LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCOD
 LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja'.split())
 ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 0])
 MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 1])
+RETURNS_FIRE_UNITS = set(list(MISSILE_UNITS) + ['Unicorn'])
 
 DAMAGE_TBL = {}
 ATTACK_STRENGTH = {}
@@ -465,17 +467,17 @@ def movemap(tiles_list, army_id, turnmove):
     if turnmove['data']['purchase']:
         purch = turnmove['data']['purchase']
         return set_text_map(text_map, purch, '_coordinate', UNIT_SHORTCODES[purch['unit_name']])
-    move = turnmove['data']['move']
-    if 'x_coordinate' in move:
-        for movement in move['movements']:
+    movemove = turnmove['data']['move']
+    if 'x_coordinate' in movemove:
+        for movement in movemove['movements']:
             set_text_map(text_map, movement, 'Coordinate', ".")
-    if move.get('unit_action', '') == 'capture':
-        if len(move['movements']) == 0:
-            set_text_map(text_map, move, '_coordinate', "#")
+    if movemove.get('unit_action', '') == 'capture':
+        if len(movemove['movements']) == 0:
+            set_text_map(text_map, movemove, '_coordinate', "#")
         else:
-            set_text_map(text_map, move['movements'][-1], 'Coordinate', "#")
-    if 'x_coord_attack' in move:
-        set_text_map(text_map, move, '_coord_attack', "x")
+            set_text_map(text_map, movemove['movements'][-1], 'Coordinate', "#")
+    if 'x_coord_attack' in movemove:
+        set_text_map(text_map, movemove, '_coord_attack', "x")
     return text_map
 
 def movemap_list(tiles_list, army_id, turnmove):
@@ -1208,27 +1210,44 @@ def apply_move(army_id, tiles_by_idx, player_info, move):
                                'building_team_name': "TODOteam_name" })
         return True
 
-    if 'x_coord_attack' in move:
+    if 'x_coord_attack' in movemove:
         if src_tile['unit_name'] not in ATTACKING_UNITS:
             return mverr("unit can't attack: {}".format(tilestr(src_tile, True)))
-        attack_xyidx = int(movemove['x_coord_attack'])*1000 + int(movemove['y_coord_attack'])
-        attackee = tiles_by_idx[attack_xyidx]
+        attackee_xyidx = int(movemove['y_coord_attack'])*1000 + int(movemove['x_coord_attack'])
+        attackee = tiles_by_idx[attackee_xyidx]
+        unit_info = UNIT_TYPES[src_tile['unit_name']]
+        atkdist = dist(dest_tile, attackee)
         if attackee.get('unit_name') not in UNIT_TYPES.keys():
             return mverr("can't attack, no unit at dest: {}".format(tilestr(attackee, True)))
-        atkdist = dist(src_tile, attackee)
-        unit_info = UNIT_TYPES[src_tile['unit_name']]
-        if atkdist < unit_info['atkmin'] or atkdist > unit_info['atkmax']:
-            return mverr("attacker {} not in range [{}-{}] from attackee {}".format(
-                tilestr(src_tile), unit_info['atkmin'], unit_info['atkmax'], tilestr(attackee)))
+        if not (unit_info['atkmin'] <= dist(dest_tile, attackee) <= unit_info['atkmax']):
+            return mverr("attacker {}=>{} not in range [{}-{}] from attackee {}".format(
+                tilestr(src_tile), tilestr(dest_tile), unit_info['atkmin'], unit_info['atkmax'],
+                tilestr(attackee)))
+        
         move_unit(src_tile, dest_tile)
-        base_damage = DAMAGE_TBL[src_tile['unit_name']][dest_tile['unit_name']]
-        attack_weight = unit_health(src_tile) / 100.0
-        terrain_weight = 1.0 - (TERRAIN_DEFENSE[dest_tile['terrain_name']] / 10.0)
+        attacker = dest_tile
+        base_damage = DAMAGE_TBL[attacker['unit_name']][attackee['unit_name']]
+        attack_weight = unit_health(attacker) / 100.0
+        terrain_weight = 1.0 - (TERRAIN_DEFENSE[attackee['terrain_name']] / 10.0)
         damage = int(base_damage * attack_weight * terrain_weight)
-        attackee['health'] = int(attackee) - damage
-        if unit_health(tiles_by_idx[attack_xyidx]) <= 0:
-            DBGPRINT("attacker {} killed unit {}".format(attacker, attackee))
+        DBGPRINT("attack! {}(h={}) vs {}(h={}) dmg={}".format(
+            tilestr(attacker), attacker['health'],
+            tilestr(attackee), attackee['health'], damage))
+        attackee['health'] = str(unit_health(attackee) - damage)
+        if unit_health(attackee) <= 0:
+            DBGPRINT("attacker {} killed unit {}".format(
+                    tilestr(attacker), tilestr(attackee)))
             del_unit(attackee)
+        elif attackee['unit_name'] in RETURNS_FIRE_UNITS:
+            rbase_damage = DAMAGE_TBL[attackee['unit_name']][attacker['unit_name']]
+            rattack_weight = unit_health(attackee) / 100.0
+            rterrain_weight = 1.0 - (TERRAIN_DEFENSE[attacker['terrain_name']] / 10.0)
+            rdamage = int(rbase_damage * rattack_weight * rterrain_weight)
+            attacker['health'] = str(unit_health(attackee) - rdamage)
+            if unit_health(attacker) <= 0:
+                DBGPRINT("attacker {} got killed in return fire from unit {}".format(
+                    tilestr(attacker), tilestr(attackee)))
+                del_unit(attacker)
         return True
 
     # simple movement
@@ -1272,7 +1291,7 @@ def score_position(army_id, tiles_by_idx, move=None):
     
 def score_move(army_id, tiles_by_idx, player_info, move):
     if move.get('stop_worker_num', '') != '':
-        return 0
+        return 0, ""
     tiles_by_idx = copy.deepcopy(tiles_by_idx)
     player_info = copy.deepcopy(player_info)
 
@@ -1292,23 +1311,23 @@ def score_move(army_id, tiles_by_idx, player_info, move):
     # obviously, this is (highly) suboptimal, but it plays games 10x faster to help accelerate
     # learning...
     multiplier = 1.0
-    if move.get('unit_action', '') == 'capture':
-        multiplier *= 2.0
-        # TODO: bonus for completing capture
-        # TODO: bonus for stealing from enemy
-    # bonus for attacking enemy
-    if 'x_coord_attack' in move:
-        multiplier *= 2.0
-        # TODO: bonus for killing enemy
-        # TODO: scale bonus for more damage bec it means they can do less damage to us
-        #  (ideally, scale *that* to damage this partic enemy unit can do to our known
-        #  nearby units)
     if move['data']['move']:  # ignore false
-        # TODO: bonus for healing injured units
         movemove = move['data']['move']
         dest_xyidx = movedict_xyidx(movemove)
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
+        if 'x_coord_attack' in movemove:
+            multiplier *= 1.25
+            # TODO: bonus for healing injured units
+            # TODO: bonus for killing enemy
+            # TODO: scale bonus for more damage bec it means they can do less damage to us
+            #  (ideally, scale *that* to damage this partic enemy unit can do to our known
+            #  nearby units)
+        elif move.get('unit_action', '') == 'capture':
+            multiplier *= 1.25
+            # TODO: bonus for completing capture
+            # TODO: bonus for stealing from enemy
+            # bonus for attacking enemy
         if len(movemove['movements']) > 0:
             dest_xyidx = movedict_xyidx(movemove['movements'][-1])
             dest_tile = tiles_by_idx[dest_xyidx]
@@ -1320,13 +1339,14 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         # avg top 3 nearest dests to provide variety vs competition from our other units
         avg_dist = max(0.5, numpy.average(sorted(turns_to_tgt_tile.values())[0:3]))
         DBGPRINT('{} avgdist={:.2f}: {}'.format(tilestr(dest_tile), avg_dist, sorted(turns_to_tgt_tile.values())[0:3]))
-        multiplier *= (1.0 + (1.0/avg_dist)/2)
+        multiplier *= (1.0 + (0.8/avg_dist))
 
     res = apply_move(army_id, tiles_by_idx, player_info, move)
     if res is None:
         DBGPRINT("bad move {}: skipping...".format(move))
-        return 0
+        return 0, ""
     base_score, msg = score_position(army_id, tiles_by_idx, move)
+    # note that purchase gets the lowest score, with a base of 0.0 i.e. it comes last
     score = multiplier * base_score
     if DBG_SCORING:
         msg = "score: {} = mult({}) * base={}".format(score, multiplier, msg)
