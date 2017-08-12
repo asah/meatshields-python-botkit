@@ -30,7 +30,7 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
-PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '10'))
+PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
 
 # max combined health before we no longer consider joining two units
@@ -1014,9 +1014,9 @@ def select_next_move(player_id, game_info, preparsed=False):
         sorted_moves = sorted(moves.keys(), key=lambda mvkey: moves[mvkey]['__score'],
                               reverse=True)
         DBGPRINT("{} moves available, choosing from top {}:\n{}".format(
-            len(moves), PRUNE_TOP_N_MOVES, "\n".join(["{}{}{}".format(
-                ("=> " if mvkey == key else ""), abbr_move_json(moves[key]),
-                moves[mvkey]['__score_details']) for key in sorted_moves])
+            len(moves), PRUNE_TOP_N_MOVES, "\n".join(["{}{}".format(
+                ("=> " if mvkey == key else ""), abbr_move_json(moves[key])
+                ) for key in sorted_moves])
         ))
     if len(moves) == 1:
         DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
@@ -1227,6 +1227,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move):
         damage = int(base_damage * attack_weight * terrain_weight)
         attackee['health'] = int(attackee) - damage
         if unit_health(tiles_by_idx[attack_xyidx]) <= 0:
+            DBGPRINT("attacker {} killed unit {}".format(attacker, attackee))
             del_unit(attackee)
         return True
 
@@ -1304,18 +1305,23 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         #  nearby units)
     if move['data']['move']:  # ignore false
         # TODO: bonus for healing injured units
-        src_xyidx = movedict_xyidx(move['data']['move'])
-        src_tile = tiles_by_idx[src_xyidx]
-        unit_max_move = float(max_travel(src_tile))
-        turns_to_dest_tile = {}
-        # can't be empty - see top
-        for dest_tile in capturable_tiles + attackable_units:
-            turns_to_dest_tile[dest_tile['xyidx']] = (
-                dist(src_tile, dest_tile) / unit_max_move)
+        movemove = move['data']['move']
+        dest_xyidx = movedict_xyidx(movemove)
+        dest_tile = tiles_by_idx[dest_xyidx]
+        unit_max_move = float(max_travel(dest_tile))
+        if len(movemove['movements']) > 0:
+            dest_xyidx = movedict_xyidx(movemove['movements'][-1])
+            dest_tile = tiles_by_idx[dest_xyidx]
+        turns_to_tgt_tile = {}
+        # can't be empty - see above re capturable_tiles
+        for tgt_tile in capturable_tiles + attackable_units:
+            turns_to_tgt_tile[tgt_tile['xyidx']] = max(
+                1.0, dist(dest_tile, tgt_tile) / unit_max_move)
         # avg top 3 nearest dests to provide variety vs competition from our other units
-        avg_dist = numpy.average(sorted(turns_to_dest_tile.values())[0:3])
-        multiplier *= 1.0 + (1.0/avg_dist)
-        
+        avg_dist = max(0.5, numpy.average(sorted(turns_to_tgt_tile.values())[0:3]))
+        DBGPRINT('{} avgdist={:.2f}: {}'.format(tilestr(dest_tile), avg_dist, sorted(turns_to_tgt_tile.values())[0:3]))
+        multiplier *= (1.0 + (1.0/avg_dist)/2)
+
     res = apply_move(army_id, tiles_by_idx, player_info, move)
     if res is None:
         DBGPRINT("bad move {}: skipping...".format(move))
