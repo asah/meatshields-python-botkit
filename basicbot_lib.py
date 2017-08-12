@@ -30,7 +30,7 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
-PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
+PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '4'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
 
 # max combined health before we no longer consider joining two units
@@ -1293,12 +1293,12 @@ def score_move(army_id, tiles_by_idx, player_info, move):
     # learning...
     multiplier = 1.0
     if move.get('unit_action', '') == 'capture':
-        multiplier *= 1.25
+        multiplier *= 2.0
         # TODO: bonus for completing capture
         # TODO: bonus for stealing from enemy
     # bonus for attacking enemy
     if 'x_coord_attack' in move:
-        multiplier *= 1.25
+        multiplier *= 2.0
         # TODO: bonus for killing enemy
         # TODO: scale bonus for more damage bec it means they can do less damage to us
         #  (ideally, scale *that* to damage this partic enemy unit can do to our known
