@@ -2,6 +2,10 @@
 lastreq.json
 nohup.out
 
+# pypy
+pypy3-v5.8.0-linux64.tar.bz2
+pypy3-v5.8.0-linux64/
+
 # emacs
 [.][#]*
 *~
