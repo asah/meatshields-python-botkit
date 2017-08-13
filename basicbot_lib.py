@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- compile-command: "/usr/local/bin/python3 sim.py" -*-
 #
 # pylint:disable=locally-disabled,fixme,bad-whitespace,missing-docstring,multiple-imports,global-statement,multiple-statements,no-self-use,too-few-public-methods,
 #
@@ -42,6 +43,9 @@ PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '0') == '1'
 DBG_PARALLEL_MOVE_DISCOVERY = (os.environ.get('DBG_PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
 APP = API = None
+
+ATTACK_DEFENDER_KILLED = -1
+ATTACK_ATTACKER_KILLED = -2
 
 # remember turns and moves between API calls - helps debugging
 GAMES = {}
@@ -217,8 +221,8 @@ def compact_json_dumps(data):
     # keep __unit_name on the same line as  __unit_action
     # keep building_army_name and building_team_name on the same line as building_army_id
     compact_response = re.sub(
-        r'(?m)\r?\n +"(__unit_[_a-z]+|__walkcost|__score_wt|building_army_name|building_team_name|'+
-        r'health|secondary_ammo|unit_army_name|unit_id|unit_name|unit_team_name|response_msec)',
+        r'(?m)\r?\n +"(__(score|unit)_[_a-z]+|__walkcost|building_army_name|building_team_name|'+
+        r'move|tile|health|secondary_ammo|unit_(army_name|id|name|team_name)|response_msec)',
         r' "\1', compact_response)
     return compact_response
 
@@ -495,6 +499,9 @@ def tile2xyidx(tile):
 def idx2xy(xyidx):
     return int(xyidx / 1000), xyidx % 1000
 
+def xyidxstr(xyidx):
+    return "{},{}",format(xyidx % 1000, int(xyidx / 1000))
+
 def set_xy_fields(tile):
     # support compact representation
     if 'xy' in tile:
@@ -658,7 +665,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                     '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                     'movements': [], 'unit_action': 'unloadSlot1' }
                 if cache_move(mkres(move=unload_move), moves):
-                    if DBG_MOVES or DBG_UNICORN_LOADING:
+                    if DBG_UNICORN_LOADING:
                         DBGPRINT('loaded, unmoved unicorn: {} unload to {}'.format(
                             tilestr(unit), tilestr(nbr)))
                     return mkres(move=unload_move)
@@ -693,7 +700,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                             '__walkcost': walk_cost(ldable['unit_name'], p['terrain_name']),
                             '__terrain': p['terrain_name'] } for p in walk_dest['path'] ]}
                     if cache_move(mkres(move=load_move), moves):
-                        if DBG_MOVES or DBG_UNICORN_LOADING:
+                        if DBG_UNICORN_LOADING:
                             DBGPRINT('unloaded unicorn found: {} -- loading {} via {}'.format(
                                 tilestr(unit), tilestr(ldable), pathstr(walk_dest['path'])))
                         return mkres(move=load_move)
@@ -770,7 +777,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                         '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                         'unit_action': 'unloadSlot1' })
                     if cache_move(mkres(move=unload_move), moves):
-                        if DBG_MOVES or DBG_UNICORN_LOADING:
+                        if DBG_UNICORN_LOADING:
                             DBGPRINT('loaded, moved unicorn {} => {}, unload to {}'.format(
                                 tilestr(unit), tilestr(dest), tilestr(nbr)))
                         return mkres(move=unload_move)
@@ -1213,41 +1220,41 @@ def apply_move(army_id, tiles_by_idx, player_info, move):
     if 'x_coord_attack' in movemove:
         if src_tile['unit_name'] not in ATTACKING_UNITS:
             return mverr("unit can't attack: {}".format(tilestr(src_tile, True)))
-        attackee_xyidx = int(movemove['y_coord_attack'])*1000 + int(movemove['x_coord_attack'])
-        attackee = tiles_by_idx[attackee_xyidx]
+        defender_xyidx = int(movemove['y_coord_attack'])*1000 + int(movemove['x_coord_attack'])
+        defender = tiles_by_idx[defender_xyidx]
         unit_info = UNIT_TYPES[src_tile['unit_name']]
-        atkdist = dist(dest_tile, attackee)
-        if attackee.get('unit_name') not in UNIT_TYPES.keys():
-            return mverr("can't attack, no unit at dest: {}".format(tilestr(attackee, True)))
-        if not (unit_info['atkmin'] <= dist(dest_tile, attackee) <= unit_info['atkmax']):
-            return mverr("attacker {}=>{} not in range [{}-{}] from attackee {}".format(
+        atkdist = dist(dest_tile, defender)
+        if defender.get('unit_name') not in UNIT_TYPES.keys():
+            return mverr("can't attack, no unit at dest: {}".format(tilestr(defender, True)))
+        if not (unit_info['atkmin'] <= dist(dest_tile, defender) <= unit_info['atkmax']):
+            return mverr("attacker {}=>{} not in range [{}-{}] from defender {}".format(
                 tilestr(src_tile), tilestr(dest_tile), unit_info['atkmin'], unit_info['atkmax'],
-                tilestr(attackee)))
+                tilestr(defender)))
         
         move_unit(src_tile, dest_tile)
         attacker = dest_tile
-        base_damage = DAMAGE_TBL[attacker['unit_name']][attackee['unit_name']]
+        base_damage = DAMAGE_TBL[attacker['unit_name']][defender['unit_name']]
         attack_weight = unit_health(attacker) / 100.0
-        terrain_weight = 1.0 - (TERRAIN_DEFENSE[attackee['terrain_name']] / 10.0)
+        terrain_weight = 1.0 - (TERRAIN_DEFENSE[defender['terrain_name']] / 10.0)
         damage = int(base_damage * attack_weight * terrain_weight)
-        DBGPRINT("attack! {}(h={}) vs {}(h={}) dmg={}".format(
-            tilestr(attacker), attacker['health'],
-            tilestr(attackee), attackee['health'], damage))
-        attackee['health'] = str(unit_health(attackee) - damage)
-        if unit_health(attackee) <= 0:
-            DBGPRINT("attacker {} killed unit {}".format(
-                    tilestr(attacker), tilestr(attackee)))
-            del_unit(attackee)
-        elif attackee['unit_name'] in RETURNS_FIRE_UNITS:
-            rbase_damage = DAMAGE_TBL[attackee['unit_name']][attacker['unit_name']]
-            rattack_weight = unit_health(attackee) / 100.0
+        move['__attack'] = {'attacker':tilestr(attacker), 'attacker_health': attacker['health'],
+                            'defender': tilestr(defender), 'defender_health': defender['health'],
+                            'damage': damage }
+        defender['health'] = str(unit_health(defender) - damage)
+        if unit_health(defender) <= 0:
+            del_unit(defender)
+            move['__attack']['return_damage'] = ATTACK_DEFENDER_KILLED
+        elif defender['unit_name'] in RETURNS_FIRE_UNITS:
+            rbase_damage = DAMAGE_TBL[defender['unit_name']][attacker['unit_name']]
+            rattack_weight = unit_health(defender) / 100.0
             rterrain_weight = 1.0 - (TERRAIN_DEFENSE[attacker['terrain_name']] / 10.0)
             rdamage = int(rbase_damage * rattack_weight * rterrain_weight)
-            attacker['health'] = str(unit_health(attackee) - rdamage)
+            move['__attack']['return_damage'] = rdamage
+            attacker['health'] = str(unit_health(defender) - rdamage)
             if unit_health(attacker) <= 0:
-                DBGPRINT("attacker {} got killed in return fire from unit {}".format(
-                    tilestr(attacker), tilestr(attackee)))
+                move['__killed_atk'] = copy.deepcopy(attacker)
                 del_unit(attacker)
+                move['__attack']['return_damage'] = ATTACK_ATTACKER_KILLED
         return True
 
     # simple movement
@@ -1295,7 +1302,7 @@ def score_move(army_id, tiles_by_idx, player_info, move):
     tiles_by_idx = copy.deepcopy(tiles_by_idx)
     player_info = copy.deepcopy(player_info)
 
-    # TODO: detect HQ capture -- this is to avoid 
+    # TODO: detect HQ capture - this is just to avoid divide-by-zero errors
     capturable_tiles = [tile for tile in tiles_by_idx.values()
                         if tile['terrain_name'] in CAPTURABLE_TERRAIN
                         and tile.get('building_army_id') != army_id]
@@ -1338,7 +1345,11 @@ def score_move(army_id, tiles_by_idx, player_info, move):
                 1.0, dist(dest_tile, tgt_tile) / unit_max_move)
         # avg top 3 nearest dests to provide variety vs competition from our other units
         avg_dist = max(0.5, numpy.average(sorted(turns_to_tgt_tile.values())[0:3]))
-        DBGPRINT('{} avgdist={:.2f}: {}'.format(tilestr(dest_tile), avg_dist, sorted(turns_to_tgt_tile.values())[0:3]))
+        if DBG_SCORING:
+            top3dist = sorted(turns_to_tgt_tile.items(), key=lambda r: r[1])[0:3]
+            DBGPRINT('{} avgdist={:.2f}: {}'.format(
+                tilestr(dest_tile), avg_dist,
+                ", ".join(['{}@{}'.format(val, xyidxstr(key)) for key,val in top3dist])))
         multiplier *= (1.0 + (0.8/avg_dist))
 
     res = apply_move(army_id, tiles_by_idx, player_info, move)
