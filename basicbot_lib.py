@@ -500,7 +500,7 @@ def idx2xy(xyidx):
     return int(xyidx / 1000), xyidx % 1000
 
 def xyidxstr(xyidx):
-    return "{},{}",format(xyidx % 1000, int(xyidx / 1000))
+    return "{},{}".format(xyidx % 1000, int(xyidx / 1000))
 
 def set_xy_fields(tile):
     # support compact representation
