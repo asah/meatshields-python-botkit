@@ -19,20 +19,21 @@ DEBUG = (os.environ.get('FLASK_DEBUG', '0') == '1')
 
 # use env vars to turn on verbose debugging -- more control and shuts up pylint
 DBG_MOVEMENT = (os.environ.get('DBG_MOVEMENT', '0') == '1')
-DBG_TIMING = (os.environ.get('DBG_TIMING', '1') == '1')
+DBG_TIMING = (os.environ.get('DBG_TIMING', '0') == '1')
 DBG_PARSE_TIMING = (os.environ.get('DBG_PARSE_TIMING', '0') == '1')
 DBG_PRINT_SHORTCODES = (os.environ.get('DBG_PRINT_SHORTCODES', '0') == '1')
 DBG_NOTABLE_TILES = (os.environ.get('DBG_NOTABLE_TILES', '0') == '1')
 DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
 DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
 DBG_SCORING = (os.environ.get('DBG_SCORING', '0') == '1')
+DBG_SCORING_DETAIL = (os.environ.get('DBG_SCORING_DETAIL', '0') == '1')
 DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
 
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
-PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '4'))
+PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
 
 # max combined health before we no longer consider joining two units
@@ -301,9 +302,12 @@ def has_unit(tile):
 def is_my_building(tile, army_id):
     return tile.get('building_army_id', '') == army_id
 
-def can_capture(tile, unit, army_id):
+def can_capture(unit, tile, army_id):
     return (tile['terrain_name'] in CAPTURABLE_TERRAIN and unit['unit_name'] in CAPTURING_UNITS and
             not is_my_building(tile, army_id))
+
+def get_capture_remaining(tile):
+    return int(tile.get('capture_remaining') or 20)  # note: .get() can't return zero
 
 def xy_nbrs(xyidx):
     # north/south aka y +/- 1000, east/west aka x +/- 1
@@ -423,7 +427,6 @@ def unitmap(tiles_list, army_id):
     text_map = [ [""] * (len_x+1) for _ in range(len_y+1)]
     for tile in tiles_list:
         xpos, ypos = tile['x'], tile['y']
-        #DBGPRINT(tile)
         if tile.get('unit_name') is not None:
             mapchar = UNIT_SHORTCODES[tile['unit_name']]
             text_map[ypos][xpos] = (mapchar.upper() if tile['unit_army_id'] == army_id
@@ -459,6 +462,13 @@ def tilemap_json(tiles_list):
     res = "\n".join(['    "{}",'.format(line) for line in tilemap_list(tiles_list)])
     # strip trailing comma
     return res[0:-1]
+
+def combined_map(tiles_list, army_id):
+    tlist, ulist = tilemap_list(tiles_list), unitmap_list(tiles_list, army_id)
+    res = ""
+    for i in range(len(tlist)):
+        res += "{}  {}\n".format(ulist[i], tlist[i])
+    return res
 
 def movemap(tiles_list, army_id, turnmove):
     text_map = unitmap(tiles_list, army_id)
@@ -500,7 +510,7 @@ def idx2xy(xyidx):
     return int(xyidx / 1000), xyidx % 1000
 
 def xyidxstr(xyidx):
-    return "{},{}",format(xyidx % 1000, int(xyidx / 1000))
+    return "{},{}".format(xyidx % 1000, int(xyidx / 1000))
 
 def set_xy_fields(tile):
     # support compact representation
@@ -759,9 +769,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                 continue
 
             # capture open towns, castles and headquarters
-            if (can_capture(dest, unit, army_id) and
-                unit['capture_remaining'] not in [None, ""] and
-                int(unit['capture_remaining']) > 0):
+            if can_capture(unit, dest, army_id):
                 capture_move = copy_move(move, {'unit_action': 'capture', '__action': 'capture'})
                 if cache_move(mkres(move=capture_move), moves): return mkres(move=capture_move)
 
@@ -945,8 +953,7 @@ def select_next_move(player_id, game_info, preparsed=False):
         parse_map(army_id, tiles, game_info)
     tiles_list = TILES_BY_IDX.values()
     if is_first_move_in_turn(game_info['game_id']):
-        DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
-        DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
+        DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
     unmoved_tiles = [unit for unit in (MY_UNITS + MY_CASTLES) if unit.get('moved') != '1']
     # don't parallelize end_turn
     if PARALLEL_MOVE_DISCOVERY and len(unmoved_tiles) > 0:
@@ -999,13 +1006,13 @@ def select_next_move(player_id, game_info, preparsed=False):
                 del moves[mvkey]
     for mvkey, move in moves.items():
         if '__score' not in move:
-            move['__score'], move['__score_details'] = score_move(
+            move['__score'], move['__score_pos'], move['__score_details'] = score_move(
                 army_id, TILES_BY_IDX, player_info, move)
         sum_scores += move['__score']
         min_score = min(min_score, move['__score'])
     sum_scores -= min_score * len(moves)
     sum_top_scores_wt = 0.0
-    # pick from the top 10 moves, to avoid a herd of mediocre moves from competing
+    # pick from the top N moves, to avoid a herd of mediocre moves from competing
     top_moves = dict(sorted(moves.items(), key=lambda mv: mv[1]['__score'],
                             reverse=True)[0:PRUNE_TOP_N_MOVES])
     top_moves_keys = set(top_moves.keys())
@@ -1028,8 +1035,7 @@ def select_next_move(player_id, game_info, preparsed=False):
                 ) for key in sorted_moves])
         ))
     if len(moves) == 1:
-        DBGPRINT("tilemap:\n" + tilemap_json(tiles_list))
-        DBGPRINT("unitmap:\n" + unitmap_json(tiles_list, army_id))
+        DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
     move = moves[mvkey]
 
     # save the game, for debugging
@@ -1090,7 +1096,7 @@ def movedict_xyidx(movedict):
     return int(movedict.get('y_coordinate', movedict.get('yCoordinate', -1)))*1000 + \
         int(movedict.get('x_coordinate', movedict.get('xCoordinate', -1)))
 
-def apply_move(army_id, tiles_by_idx, player_info, move):
+def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
     """added to library, so it can be used for forecasting.
     note: in forecasting mode, unfogging doesn't reveal enemy troops.
     returns False if the move is end_turn."""
@@ -1114,8 +1120,9 @@ def apply_move(army_id, tiles_by_idx, player_info, move):
         if src_tile['xyidx'] == dest_tile['xyidx']: return
         update_tile_with_unit(dest_tile, src_tile)
         del_unit(src_tile)
-        if src_tile['terrain_name'] in CAPTURABLE_TERRAIN: # undo partial capture
-            src_tile['capture_remaining'] = "100"
+        if can_capture(dest_tile, src_tile, dest_tile['unit_army_id']):
+            # undo partial capture
+            src_tile['capture_remaining'] = "20"
 
     #DBGPRINT("move={}".format(move))
     if move.get('stop_worker_num', '') != '':
@@ -1207,14 +1214,19 @@ def apply_move(army_id, tiles_by_idx, player_info, move):
             return mverr("terrain can't be captured: {}".format(tilestr(dest_tile, True)))
         if is_my_building(dest_tile, army_id):
             return mverr("tile already captured: {}".format(tilestr(dest_tile, True)))
-        capture_remaining = dest_tile.get('capture_remaining', 20) or 20  # note: can't be zero
+        capture_remaining = get_capture_remaining(dest_tile)
         capture_remaining = max(0, int(capture_remaining) - int(10.0 * unit_health(src_tile) / 100.0))
         move_unit(src_tile, dest_tile)
         dest_tile.update({ 'capture_remaining': str(capture_remaining) })
         if capture_remaining == 0:
+            if dbg: DBGPRINT('army_id={} completed capture of {}'.format(army_id, tilestr(dest_tile)))
             dest_tile.update({ 'building_army_id': army_id,
+                               'capture_remaining': '20', # reset
                                'building_army_name': "TODOarmy_name",
                                'building_team_name': "TODOteam_name" })
+        else:
+            if dbg: DBGPRINT('army_id={} capturing {}, capture_remaining={}'.format(
+                army_id, tilestr(dest_tile), capture_remaining))
         return True
 
     if 'x_coord_attack' in movemove:
@@ -1298,7 +1310,7 @@ def score_position(army_id, tiles_by_idx, move=None):
     
 def score_move(army_id, tiles_by_idx, player_info, move):
     if move.get('stop_worker_num', '') != '':
-        return 0, ""
+        return 0, 0, ""
     tiles_by_idx = copy.deepcopy(tiles_by_idx)
     player_info = copy.deepcopy(player_info)
 
@@ -1324,14 +1336,14 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
         if 'x_coord_attack' in movemove:
-            multiplier *= 1.25
+            multiplier *= 2.5
             # TODO: bonus for healing injured units
             # TODO: bonus for killing enemy
             # TODO: scale bonus for more damage bec it means they can do less damage to us
             #  (ideally, scale *that* to damage this partic enemy unit can do to our known
             #  nearby units)
-        elif move.get('unit_action', '') == 'capture':
-            multiplier *= 1.25
+        elif movemove.get('unit_action', '') == 'capture':
+            multiplier *= 2.5
             # TODO: bonus for completing capture
             # TODO: bonus for stealing from enemy
             # bonus for attacking enemy
@@ -1345,7 +1357,7 @@ def score_move(army_id, tiles_by_idx, player_info, move):
                 1.0, dist(dest_tile, tgt_tile) / unit_max_move)
         # avg top 3 nearest dests to provide variety vs competition from our other units
         avg_dist = max(0.5, numpy.average(sorted(turns_to_tgt_tile.values())[0:3]))
-        if DBG_SCORING:
+        if DBG_SCORING_DETAIL:
             top3dist = sorted(turns_to_tgt_tile.items(), key=lambda r: r[1])[0:3]
             DBGPRINT('{} avgdist={:.2f}: {}'.format(
                 tilestr(dest_tile), avg_dist,
@@ -1355,19 +1367,17 @@ def score_move(army_id, tiles_by_idx, player_info, move):
     res = apply_move(army_id, tiles_by_idx, player_info, move)
     if res is None:
         DBGPRINT("bad move {}: skipping...".format(move))
-        return 0, ""
-    base_score, msg = score_position(army_id, tiles_by_idx, move)
+        return 0, 0, ""
+    pos_score, msg = score_position(army_id, tiles_by_idx, move)
     # note that purchase gets the lowest score, with a base of 0.0 i.e. it comes last
-    score = multiplier * base_score
+    score = multiplier * pos_score
     if DBG_SCORING:
-        msg = "score: {} = mult({}) * base={}".format(score, multiplier, msg)
-    return score, msg
-    
+        msg = "score: {:.2f} = mult({:.2f}) * base={}".format(score, multiplier, msg)
+    return score, pos_score, msg
+
 def initialize_player_turn(army_id, tiles_by_idx, player_info, game_state):
     game_state['botPlayerId'] = int(player_info['player_id'])
     player_info['funds'] = int(player_info.get('funds', 0)) + new_funds(army_id, tiles_by_idx)
     for tile in tiles_by_idx.values():
         tile['moved'] = '0'
 
-    
-    
