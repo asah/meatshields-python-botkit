@@ -246,7 +246,7 @@ def pathstr(path, show_terrain=False):
         (("{}@{}".format(tile['terrain_name'][0:4], tile2xystr(tile)))
          if show_terrain else tile2xystr(tile)) for tile in path])
 
-def tilestr(tile, show_details=False):
+def tilestr(tile, show_details=False, show_unit=True):
     """canonical way to display a tile's location, terrain and (if present) unit.
     units are shortened to 3 chars, terrain to 4, which helps standardize formatting.
     army #1 units are printed is like this: unic  (for unicorn)
@@ -256,6 +256,7 @@ def tilestr(tile, show_details=False):
     army #5 units are printed is like this: UNIC.
     show_details=True is meant for one-line-per-tile output"""
     # TODO: show_details
+    
     if tile.get('unit_name') in [None, ""]:
         unit_name = "----"
     else:
@@ -268,8 +269,9 @@ def tilestr(tile, show_details=False):
     details = ""
     if show_details:
         details = " "+tile_details_str(tile)
-    return "{}@{:02d},{:02d}:{}{}".format(
-        tile['terrain_name'][0:4], tile['x'], tile['y'], unit_name, details)
+    return "{}@{:02d},{:02d}{}{}".format(
+        tile['terrain_name'][0:4], tile['x'], tile['y'], (":"+unit_name) if show_unit else "",
+        details)
 
 def movestr(move):
     data = move['data']

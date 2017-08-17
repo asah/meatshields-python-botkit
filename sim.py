@@ -70,8 +70,8 @@ def main():
         for aid in resigned.keys():
             owned = [tile for tile in MASTER_TILES_BY_IDX.values()
                      if tile['building_army_id'] == aid]
-            print('army_id={} owns {} bldgs: {}'.format(aid, len(owned), ", ".join([
-                bblib.tilestr(mytile) for mytile in owned])))
+            print('army_id={} owns {} bldgs: {}'.format(aid, len(owned), " ".join([
+                bblib.tilestr(mytile, show_unit=False) for mytile in owned])))
             
         # resign if no moves in two turns
         if (len(turns[army_id]) > 1 and len(turns[army_id][-1]) == 1 and
