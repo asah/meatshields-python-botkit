@@ -109,7 +109,7 @@ LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCOD
 LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja'.split())
 ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 0])
 MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 1])
-RETURNS_FIRE_UNITS = set(list(MISSILE_UNITS) + ['Unicorn'])
+RETURNS_FIRE_UNITS = ATTACKING_UNITS - MISSILE_UNITS
 
 DAMAGE_TBL = {}
 ATTACK_STRENGTH = {}
@@ -1152,6 +1152,8 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
             'unit_team_name': 'foo', 'health': "100", 'fuel': '100',
             'primary_ammo': '100', 'secondary_ammo': '100', 'moved': '1'
         })
+        if dbg: DBGPRINT('army_id={} purchase, resulting in {}'.format(
+                army_id, tilestr(castle)))
         return True
     # data['move'] == True
     movemove = data['move']
@@ -1176,6 +1178,8 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
             'primary_ammo': '100', 'secondary_ammo': '100', 'moved': '1'
         })
         del_loaded_unit(src_tile)
+        if dbg: DBGPRINT('army_id={} moved & unloaded unicorn {} onto {}'. format(
+                army_id, tilestr(dest_tile), tilestr(tiles_by_idx[unload_xyidx])))
         return True
 
     if movemove.get('unit_action', 'simplemove') == 'load':
@@ -1192,6 +1196,8 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
             'slot1_deployed_unit_id': dest_tile['unit_id'],
             'slot1_deployed_unit_name': dest_tile['unit_name'],
             'slot1_deployed_unit_health': dest_tile['health'] })
+        if dbg: DBGPRINT('army_id={} load unicorn {} from {}'. format(
+                army_id, tilestr(dest_tile), tilestr(src_tile)))
         del_unit(src_tile)
         return True
 
@@ -1251,28 +1257,37 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         attack_weight = unit_health(attacker) / 100.0
         terrain_weight = 1.0 - (TERRAIN_DEFENSE[defender['terrain_name']] / 10.0)
         damage = int(base_damage * attack_weight * terrain_weight)
+        if dbg: DBGPRINT('army_id={} attack {} vs {} dhealth={} dmg={}'.format(
+                army_id, tilestr(attacker), tilestr(defender), defender['health'], damage))
         move['__attack'] = {'attacker':tilestr(attacker), 'attacker_health': attacker['health'],
                             'defender': tilestr(defender), 'defender_health': defender['health'],
                             'damage': damage }
         defender['health'] = str(unit_health(defender) - damage)
+        rdamage = 0
         if unit_health(defender) <= 0:
             del_unit(defender)
             move['__attack']['return_damage'] = ATTACK_DEFENDER_KILLED
+            if dbg: DBGPRINT('=> defender killed')
         elif defender['unit_name'] in RETURNS_FIRE_UNITS:
             rbase_damage = DAMAGE_TBL[defender['unit_name']][attacker['unit_name']]
             rattack_weight = unit_health(defender) / 100.0
             rterrain_weight = 1.0 - (TERRAIN_DEFENSE[attacker['terrain_name']] / 10.0)
             rdamage = int(rbase_damage * rattack_weight * rterrain_weight)
             move['__attack']['return_damage'] = rdamage
+            if dbg: DBGPRINT('=> return dmg={} vs attacker health={}'.format(
+                    rdamage, attacker['health']))
             attacker['health'] = str(unit_health(defender) - rdamage)
             if unit_health(attacker) <= 0:
                 move['__killed_atk'] = copy.deepcopy(attacker)
                 del_unit(attacker)
                 move['__attack']['return_damage'] = ATTACK_ATTACKER_KILLED
+                if dbg: DBGPRINT('=> attacker killed')
         return True
 
     # simple movement
     if len(movemove['movements']) > 0:
+        if dbg: DBGPRINT('army_id={} moved {} ==> {}'. format(
+                army_id, tilestr(src_tile), tilestr(dest_tile)))
         move_unit(src_tile, dest_tile)
     else:
         src_tile['moved'] = '1'
@@ -1338,7 +1353,7 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
         if 'x_coord_attack' in movemove:
-            multiplier *= 2.5
+            multiplier *= 4.0
             # TODO: bonus for healing injured units
             # TODO: bonus for killing enemy
             # TODO: scale bonus for more damage bec it means they can do less damage to us
