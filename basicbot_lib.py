@@ -290,7 +290,7 @@ def movestr(move):
                 movemove['x_coord_action'], movemove['y_coord_action'])
         else:
             postmove_action = ""
-        return '{}: {} @ {},{} => {},{}{}'.format(
+        return '{}: {} @ {},{} -> {},{}{}'.format(
             movemove['__unit_action'], movemove['__unit_name'],
             movemove['x_coordinate'], movemove['y_coordinate'],
             dest['xCoordinate'] if dest else movemove['x_coordinate'],
@@ -788,7 +788,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                         'unit_action': 'unloadSlot1' })
                     if cache_move(mkres(move=unload_move), moves):
                         if DBG_UNICORN_LOADING:
-                            DBGPRINT('loaded, moved unicorn {} => {}, unload to {}'.format(
+                            DBGPRINT('loaded, moved unicorn {} -> {}, unload to {}'.format(
                                 tilestr(unit), tilestr(dest), tilestr(nbr)))
                         return mkres(move=unload_move)
             
@@ -1247,7 +1247,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         if defender.get('unit_name') not in UNIT_TYPES.keys():
             return mverr("can't attack, no unit at dest: {}".format(tilestr(defender, True)))
         if not (unit_info['atkmin'] <= dist(dest_tile, defender) <= unit_info['atkmax']):
-            return mverr("attacker {}=>{} not in range [{}-{}] from defender {}".format(
+            return mverr("attacker {}->{} not in range [{}-{}] from defender {}".format(
                 tilestr(src_tile), tilestr(dest_tile), unit_info['atkmin'], unit_info['atkmax'],
                 tilestr(defender)))
         
@@ -1286,7 +1286,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
 
     # simple movement
     if len(movemove['movements']) > 0:
-        if dbg: DBGPRINT('army_id={} moved {} ==> {}'. format(
+        if dbg: DBGPRINT('army_id={} moved {} -> {}'. format(
                 army_id, tilestr(src_tile), tilestr(dest_tile)))
         move_unit(src_tile, dest_tile)
     else:
@@ -1309,6 +1309,12 @@ def score_position(army_id, tiles_by_idx, move=None):
     # More board visible (less fog) -- also accounts for moving to 'front line'
     pct_visible = int((100.0 * num_visible) / len(tiles_by_idx))
     production_capacity = len(MY_CASTLES) + len(MY_TOWNS)
+    # encourage units to move away from castles
+    dist_from_my_castles = 0
+    for unit in MY_UNITS:
+        for castle in MY_CASTLES:
+            dist_from_my_castles += dist(unit, castle)
+    dist_from_my_castles /= float(len(MY_UNITS))
     num_my_units = len(MY_UNITS)
     # scale to assuming 10 units before overwhelming other factors
     sum_attack_strength = int(sum([attack_strength(unit)*unit_health(unit)/1000.0
@@ -1317,11 +1323,12 @@ def score_position(army_id, tiles_by_idx, move=None):
                                     for unit in MY_UNITS]))
     # square the score to skew move choice to better moves...
     score = num_my_units * 10 + production_capacity * 10 + pct_visible + \
-            sum_attack_strength + sum_defense_strength
-    msg = "{} = #units*10({}) + prod*10({}) + %vis({:02d}) + atk({}) + def({}): {}".format(
-        score, num_my_units * 10, production_capacity * 10, pct_visible,
-        sum_attack_strength, sum_defense_strength, movestr(move) if move else "") if \
-        DBG_SCORING else ""
+            sum_attack_strength + sum_defense_strength + dist_from_my_castles * 40.0
+    msg = ("{} = #unit*10({}) + prod*10({}) + %vis({:.0f}) + atk({}) + "+
+           "def({}) + dist*40({:.0f}): {}").format(
+               score, num_my_units*10, production_capacity*10, pct_visible,
+               sum_attack_strength, sum_defense_strength, dist_from_my_castles*40,
+               movestr(move) if move else "") if DBG_SCORING else ""
     return score, msg
 
     
