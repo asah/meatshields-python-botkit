@@ -12,7 +12,7 @@
 # note: algorithm improvements are deferred for machine learning, for now just use random
 #
 import os, random
-import basicbot_lib
+import basicbot_lib as bblib
 from flask import Flask, request, json, make_response
 from flask_restful import Resource, Api
 
@@ -37,10 +37,10 @@ class BasicNextMove(Resource):
         else:
             player_id = str(request.form['botPlayerId'])
             game_info = json.loads(request.form['gameInfo'])
-        move = basicbot_lib.select_next_move(player_id, game_info)
+        move = bblib.select_next_move(player_id, game_info)
         if DEBUG:
-            DBGPRINT("move response: \n{}".format(basicbot_lib.compact_json_dumps(move)))
-            response = make_response(basicbot_lib.compact_json_dumps(move))
+            DBGPRINT("move response: \n{}".format(bblib.compact_json_dumps(move)))
+            response = make_response(bblib.compact_json_dumps(move))
             response.headers['content-type'] = 'application/json'
         else:
             response = move

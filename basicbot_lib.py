@@ -1140,10 +1140,10 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         if castle.get('unit_name') not in [None, '']:
             return mverr('cannot purchase new unit at {} which is occupied'.format(
                 tilestr(castle)))
-        if player_info['funds'] < UNIT_TYPES[unit_name]['cost']:
+        if int(player_info['funds']) < UNIT_TYPES[unit_name]['cost']:
             return mverr('insufficient funds {} to purchase a {} (cost={}) at {}'.format(
                 player_info['funds'], unit_name, UNIT_TYPES[unit_name]['cost'], tilestr(castle)))
-        player_info['funds'] -= UNIT_TYPES[unit_name]['cost']
+        player_info['funds'] = str(int(player_info['funds']) - UNIT_TYPES[unit_name]['cost'])
         new_unit_id = 100 + \
             max([int(ifdictnone(tile, 'unit_id', 0)) for tile in tiles_by_idx.values()])
         update_tile_with_dict(castle, {
