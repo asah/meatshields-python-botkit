@@ -59,7 +59,7 @@ def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
 NO_TILE = {'x':0, 'y':0}
 def encode_move(move, tiles_by_idx):
     def emit_tile_loc(boolval, idx):
-        tile = tiles_by_idx[idx] if boolval else NO_TILE
+        tile = tiles_by_idx.get(idx, {'x':0, 'y':0}) if boolval else NO_TILE
         return "{0:05b}{0:05b}".format(tile['x'], tile['y'])
     def emit_bool(boolval):
         return '{0:01b}'.format(1 if boolval else 0)
@@ -70,16 +70,16 @@ def encode_move(move, tiles_by_idx):
     data = move['data']
     bitmap, done = append_bool([], False, move.get('stop_worker_num', '') != '')
     bitmap, has_data = append_bool(bitmap, False, bool(move['data']))
-    bitmap, end_turn = append_bool(bitmap, False, bool(data['end_turn']))
+    bitmap, end_turn = append_bool(bitmap, False, bool(data.get('end_turn', False)))
     bitmap, skip     = append_bool(bitmap, False, done or (not has_data))
 
-    bitmap, has_purchase = append_bool(bitmap, skip, bool(data['purchase']))
+    bitmap, has_purchase = append_bool(bitmap, skip, bool(data.get('purchase', False)))
     bitmap += '{0:01b}'.format(0 if skip else has_purchase)
     purchase = data['purchase'] if has_purchase else {}
     bitmap += "{0:04b}".format(UNIT_VALUES[purchase['unit_name']] if has_purchase else 0)
     bitmap += emit_tile_loc(has_purchase, bblib.movedict_xyidx(purchase))
     
-    movemove = data['move']
+    movemove = data.get('move', False)
     bitmap, has_move = append_bool(bitmap, skip, bool(movemove) and not skip)
     if not movemove: movemove = {'xCoordinate':-1,'yCoordinate':-1}
     # TODO: no movement?
@@ -114,4 +114,22 @@ def write_board_move_state(winning_army_id_str, board_move_states):
         army_id = int(bitmap_str[0:2], 2)
         fh.write("{}\t{}\n".format("1" if army_id == winning_army_id else "0", bitmap_str))
     fh.close()
+
+def is_move_attack(board_move_state):
+    return board_move_state[-MOVE_LEN:][45] == "1"
+
+def is_move_capture(board_move_state):
+    return board_move_state[-MOVE_LEN:][33] == "1"
+
+MOVE_LEN = len(encode_move({'data':{'end_turn':True}}, {}))
+EXAMPLE_ATTACK = encode_move({'data':{'move':{'x_coord_attack':0}}}, {})
+assert(is_move_attack(EXAMPLE_ATTACK))
+EXAMPLE_CAPTURE = encode_move({'data':{'move': {'unit_action':'capture'}}}, {})
+assert(is_move_capture(EXAMPLE_CAPTURE))
+# asah print(''.join(EXAMPLE_CAPTURE)) asah
+
+if __name__ == '__main__':
+    filename = sys.argv[1]
+    attacks = [line for line in open(filename).readlines() if is_move_attack(board_move_state)]
+    print('\n'.join(attacks))
 

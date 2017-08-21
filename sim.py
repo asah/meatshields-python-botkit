@@ -73,10 +73,12 @@ def main():
             bstate = bms.encode_board_state(player_turn_idx, resigned, game_info,
                                            list(MASTER_TILES_BY_IDX.values()))
             mstate = bms.encode_move(move, MASTER_TILES_BY_IDX)
-            print("board_state={} bits  move_state={} bits".format(
-                len(bstate), len(mstate)))
+# asah             if bms.is_move_capture(''.join(bstate + mstate)): asah
+# asah                 print('capture found.') asah
             BOARD_MOVE_STATES.append(bstate + mstate)
             if not res:
+                print("board_state={} bits: board={}, move={}".format(
+                    len(bstate)+len(mstate), len(bstate), len(mstate)))
                 break
 
         for aid in resigned.keys():
