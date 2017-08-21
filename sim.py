@@ -5,8 +5,11 @@ import json, copy, random, sys, os
 import basicbot_lib as bblib
 
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
+DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '99999999'))
 
 MASTER_TILES_BY_IDX = None
+
+BOARD_STATES = []
 
 def make_move(movenum, jsondata):
     """returns move"""
@@ -41,6 +44,7 @@ def main():
     position_scores = {}
     for player_info in game_info['players'].values():
         army_id = player_info['army_id']
+        player_info['funds'] = 0
         last_move[army_id] = None
         player_info_dict[int(player_info['turn_order'])] = player_info
         turns[army_id] = []
@@ -64,7 +68,10 @@ def main():
                     army_id, player_turn_idx+1, player_info['funds']))
             move = make_move(len(turns[army_id]), game_state)
             turns[army_id][-1].append(move)
-            if not bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True):
+            res = bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True)
+            BOARD_STATES.append(bblib.encode_board_state(
+                player_turn_idx, resigned, game_info, list(MASTER_TILES_BY_IDX.values())))
+            if not res:
                 break
 
         for aid in resigned.keys():
@@ -72,6 +79,11 @@ def main():
                      if tile['building_army_id'] == aid]
             print('army_id={} owns {} bldgs: {}'.format(aid, len(owned), " ".join([
                 bblib.tilestr(mytile, show_unit=False) for mytile in owned])))
+
+        if len(turns[army_id]) > DBG_MAX_TURNS:
+            print("army #{} resigning: turns({}) > DBG_MAX_TURNS({})".format(
+                army_id, len(turns[army_id]), DBG_MAX_TURNS))
+            resigned[army_id] = True
             
         # resign if no moves in two turns
         if (len(turns[army_id]) > 1 and len(turns[army_id][-1]) == 1 and
@@ -89,17 +101,17 @@ def main():
             resigned[army_id] = True
 
         # detect end of game
-        if resigned[army_id]:
-            if sum(resigned.values()) == len(resigned)-1:
-                for army_id, resigned in resigned.items():
-                    if not resigned:
-                        print("winner: army_id={} (capital letters)".format(army_id))
-                        print("final board position (no fog):")
-                        tiles_list = MASTER_TILES_BY_IDX.values()
-                        for final_tile in tiles_list:
-                            final_tile['in_fog'] = '0'
-                        print(bblib.unitmap_json(tiles_list, army_id))
-                        sys.exit(0)
+        if resigned[army_id] and sum(resigned.values()) == len(resigned)-1:
+            for army_id, resigned in resigned.items():
+                if not resigned:
+                    print("winner: army_id={} (capital letters)".format(army_id))
+                    print("final board position (no fog):")
+                    tiles_list = MASTER_TILES_BY_IDX.values()
+                    for final_tile in tiles_list:
+                        final_tile['in_fog'] = '0'
+                    print(bblib.unitmap_json(tiles_list, army_id))
+                    bblib.write_board_state(army_id, BOARD_STATES)
+                    sys.exit(0)
 
         # advance to next player
         player_turn_idx = (player_turn_idx + 1) % num_players

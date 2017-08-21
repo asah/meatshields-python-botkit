@@ -644,7 +644,7 @@ def is_unloaded_unicorn(unit):
         unit.get('slot1_deployed_unit_name', '') in [None, '']
 
 def is_loaded_unicorn(unit):
-    return unit['unit_name'] == 'Unicorn' and \
+    return unit.get('unit_name') == 'Unicorn' and \
         unit.get('slot1_deployed_unit_name', '') not in [None, '']
 
 def enumerate_moves(player_id, army_id, game_info, players, moves):
@@ -1347,8 +1347,8 @@ def score_move(army_id, tiles_by_idx, player_info, move):
     # obviously, this is (highly) suboptimal, but it plays games 10x faster to help accelerate
     # learning...
     multiplier = 1.0
-    if move['data']['move']:  # ignore false
-        movemove = move['data']['move']
+    movemove = move['data']['move']
+    if movemove:  # ignore false
         dest_xyidx = movedict_xyidx(movemove)
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
@@ -1398,3 +1398,61 @@ def initialize_player_turn(army_id, tiles_by_idx, player_info, game_state):
     for tile in tiles_by_idx.values():
         tile['moved'] = '0'
 
+#---------------------------------------------------------------------------
+# encoding/decoding for machine learning
+#
+
+# reserve 0 for unknown terrain & units
+TERRAIN_VALUES = dict( [(val,idx+1) for idx,val in enumerate(sorted(TERRAIN_DEFENSE.keys()))] )
+UNIT_VALUES = dict( [(val,idx+4) for idx,val in enumerate(sorted(UNIT_TYPES.keys()))] )
+UNIT_VALUES[None] = UNIT_VALUES[''] = 0
+UNIT_VALUES['UnicornKnight'] = 1
+UNIT_VALUES['UnicornArcher'] = 2
+UNIT_VALUES['UnicornNinja'] = 3
+
+MOVED_STATES = { None: 0, '0': 1, '1': 2 }
+
+def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
+    bitmap = []
+    bitmap += "{0:02b}".format(army_id_turn)  # up to 4 players
+    for player_info in game_info['players'].values():
+        army_id = player_info['army_id']
+        bitmap += "{0:01b}".format(resigned[army_id])
+        bitmap += "{0:06b}".format(min(int(player_info['funds'] / 1000), 63))  # funds: up to 63,000
+        # TODO: augment with % fog?
+        # TODO: augment with # towns/castles?
+    
+    for tile_idx in range(24 * 24):
+        done = (tile_idx >= len(tiles_list))
+        tile = {} if done else tiles_list[tile_idx]
+        bitmap += "{0:05b}".format(0 if done else tile['x'])
+        bitmap += "{0:05b}".format(0 if done else tile['y'])
+        bitmap += "{0:04b}".format(0 if done else TERRAIN_VALUES[tile['terrain_name']])
+        unit_type = tile.get('unit_name')
+        bitmap += "{0:02b}".format(0 if done else MOVED_STATES[tile.get('moved')])
+        if is_loaded_unicorn(tile):
+            unit_type += unit['slot1_deployed_unit_name']
+            # TODO: health of loaded unit
+        bitmap += "{0:04b}".format(0 if done else UNIT_VALUES[unit_type])
+        # 1-4=army_id, 5=empty
+        bitmap += "{0:03b}".format(0 if done else int(tile.get('unit_army_id') or 4)+1)
+        if 'unit_name' in tile and 'health' not in tile: tile['health'] = "100"
+        # 1=empty, 2-7=0-100% in 20% increments
+        bitmap += "{0:03b}".format(0 if done else int(int(tile.get('health', -20))/20)+2)
+        # TODO: augment with # of visible enemies?
+    return bitmap
+
+def army_id_from_board_state(bitmap_str):
+    return int(bitmap_str[0:2], 2)
+
+def write_board_state(winning_army_id_str, board_states):
+    winning_army_id = int(winning_army_id_str)
+    fh = open('board-{}.txt'.format(time.time()), 'w')
+    print('winning_army_id={}'.format(winning_army_id))
+    for i, bitmap in enumerate(board_states):
+        bitmap_str = "".join(bitmap)
+        army_id = int(army_id_from_board_state(bitmap_str))
+        fh.write("{}\t{}\n".format("1" if army_id == winning_army_id else "0", bitmap_str))
+        if i < 40:
+            print("{}\t{}".format("1" if army_id == winning_army_id else "0", bitmap_str[0:40]))
+    fh.close()
