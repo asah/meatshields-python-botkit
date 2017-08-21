@@ -32,6 +32,8 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
 
+DBG_RAND_SEED = int(os.environ.get('DBG_RAND_SEED', '1337'))
+
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
 PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
@@ -57,10 +59,10 @@ def dbgprint(msg):
 
 DBGPRINT = dbgprint
 
-def set_random_seed(val=1337):
-    """reproducibility."""
-    random.seed(val)
-    numpy.random.seed(val)
+def set_random_seed():
+    """reproducibility.  set DBG_RAND_SEED to force, e.g. for true randomness"""
+    random.seed(DBG_RAND_SEED)
+    numpy.random.seed(DBG_RAND_SEED)
     
 def mkres(**args):
     """ e.g. mkres(move={"x_coordinates": ... }) """
@@ -1360,14 +1362,14 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
         if 'x_coord_attack' in movemove:
-            multiplier *= 4.0
+            multiplier *= 3.0
             # TODO: bonus for healing injured units
             # TODO: bonus for killing enemy
             # TODO: scale bonus for more damage bec it means they can do less damage to us
             #  (ideally, scale *that* to damage this partic enemy unit can do to our known
             #  nearby units)
         elif movemove.get('unit_action', '') == 'capture':
-            multiplier *= 2.5
+            multiplier *= 4.0
             # TODO: bonus for completing capture
             # TODO: bonus for stealing from enemy
             # bonus for attacking enemy
@@ -1405,61 +1407,3 @@ def initialize_player_turn(army_id, tiles_by_idx, player_info, game_state):
     for tile in tiles_by_idx.values():
         tile['moved'] = '0'
 
-#---------------------------------------------------------------------------
-# encoding/decoding for machine learning
-#
-
-# reserve 0 for unknown terrain & units
-TERRAIN_VALUES = dict( [(val,idx+1) for idx,val in enumerate(sorted(TERRAIN_DEFENSE.keys()))] )
-UNIT_VALUES = dict( [(val,idx+4) for idx,val in enumerate(sorted(UNIT_TYPES.keys()))] )
-UNIT_VALUES[None] = UNIT_VALUES[''] = 0
-UNIT_VALUES['UnicornKnight'] = 1
-UNIT_VALUES['UnicornArcher'] = 2
-UNIT_VALUES['UnicornNinja'] = 3
-
-MOVED_STATES = { None: 0, '0': 1, '1': 2 }
-
-def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
-    bitmap = []
-    bitmap += "{0:02b}".format(army_id_turn)  # up to 4 players
-    for player_info in game_info['players'].values():
-        army_id = player_info['army_id']
-        bitmap += "{0:01b}".format(resigned[army_id])
-        bitmap += "{0:06b}".format(min(int(player_info['funds'] / 1000), 63))  # funds: up to 63,000
-        # TODO: augment with % fog?
-        # TODO: augment with # towns/castles?
-    
-    for tile_idx in range(24 * 24):
-        done = (tile_idx >= len(tiles_list))
-        tile = {} if done else tiles_list[tile_idx]
-        bitmap += "{0:05b}".format(0 if done else tile['x'])
-        bitmap += "{0:05b}".format(0 if done else tile['y'])
-        bitmap += "{0:04b}".format(0 if done else TERRAIN_VALUES[tile['terrain_name']])
-        unit_type = tile.get('unit_name')
-        bitmap += "{0:02b}".format(0 if done else MOVED_STATES[tile.get('moved')])
-        if is_loaded_unicorn(tile):
-            unit_type += unit['slot1_deployed_unit_name']
-            # TODO: health of loaded unit
-        bitmap += "{0:04b}".format(0 if done else UNIT_VALUES[unit_type])
-        # 1-4=army_id, 5=empty
-        bitmap += "{0:03b}".format(0 if done else int(tile.get('unit_army_id') or 4)+1)
-        if 'unit_name' in tile and 'health' not in tile: tile['health'] = "100"
-        # 1=empty, 2-7=0-100% in 20% increments
-        bitmap += "{0:03b}".format(0 if done else int(int(tile.get('health', -20))/20)+2)
-        # TODO: augment with # of visible enemies?
-    return bitmap
-
-def army_id_from_board_state(bitmap_str):
-    return int(bitmap_str[0:2], 2)
-
-def write_board_state(winning_army_id_str, board_states):
-    winning_army_id = int(winning_army_id_str)
-    fh = open('board-{}.txt'.format(time.time()), 'w')
-    print('winning_army_id={}'.format(winning_army_id))
-    for i, bitmap in enumerate(board_states):
-        bitmap_str = "".join(bitmap)
-        army_id = int(army_id_from_board_state(bitmap_str))
-        fh.write("{}\t{}\n".format("1" if army_id == winning_army_id else "0", bitmap_str))
-        if i < 40:
-            print("{}\t{}".format("1" if army_id == winning_army_id else "0", bitmap_str[0:40]))
-    fh.close()

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- compile-command: "/usr/local/bin/python3 sim.py" -*-
 
-import json, copy, random, sys, os
-import basicbot_lib as bblib
+import json, copy, sys, os, time
+import basicbot_lib as bblib, encode_state as es
 
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '99999999'))
 
 MASTER_TILES_BY_IDX = None
 
-BOARD_STATES = []
+BOARD_MOVE_STATES = []
 
 def make_move(movenum, jsondata):
     """returns move"""
@@ -28,9 +28,10 @@ def make_move(movenum, jsondata):
 
 def main():
     global MASTER_TILES_BY_IDX
-    seed = random.randint(0, 10000000)
-    print("random seed: {}".format(seed))
-    bblib.set_random_seed(seed)
+    if os.environ.get('DBG_RAND_SEED', '') == '':
+        bblib.DBG_RAND_SEED = int(time.time())
+        print("randomizing random seed: {}".format(bblib.DBG_RAND_SEED))
+    bblib.set_random_seed()
     game_state = json.loads(open('test_blank_board.json').read())
     game_info = game_state['gameInfo']
     bblib.parse_map(1, game_info['tiles'], game_info)
@@ -69,8 +70,9 @@ def main():
             move = make_move(len(turns[army_id]), game_state)
             turns[army_id][-1].append(move)
             res = bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True)
-            BOARD_STATES.append(bblib.encode_board_state(
-                player_turn_idx, resigned, game_info, list(MASTER_TILES_BY_IDX.values())))
+            BOARD_MOVE_STATES.append(es.encode_board_state(
+                player_turn_idx, resigned, game_info, list(MASTER_TILES_BY_IDX.values())) +
+                                es.encode_move(move, MASTER_TILES_BY_IDX))
             if not res:
                 break
 
@@ -110,7 +112,7 @@ def main():
                     for final_tile in tiles_list:
                         final_tile['in_fog'] = '0'
                     print(bblib.unitmap_json(tiles_list, army_id))
-                    bblib.write_board_state(army_id, BOARD_STATES)
+                    es.write_board_move_state(army_id, BOARD_MOVE_STATES)
                     sys.exit(0)
 
         # advance to next player
