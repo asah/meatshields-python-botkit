@@ -19,6 +19,22 @@ UNIT_VALUES['UnicornNinja'] = 3
 
 MOVED_STATES = { None: 0, '0': 1, '1': 2 }
 
+def append_unit_type_and_health(tile, done):
+    if tile is None: tile = {}
+    unit_type = tile.get('unit_name')
+    if bblib.is_loaded_unicorn(tile):
+        unit_type += unit['slot1_deployed_unit_name']
+        # TODO: health of loaded unit
+    bitmap = "{0:04b}".format(0 if done else UNIT_VALUES[unit_type])
+    # 1-4=army_id, 5=empty
+    bitmap += "{0:03b}".format(0 if done else int(tile.get('unit_army_id') or 4)+1)
+    if 'unit_name' in tile and 'health' not in tile: tile['health'] = "100"
+    health = tile.get('health')
+    # 1=empty, 2-7=0-100% in 20% increments
+    health_val = int(int(health if health else -20)/20)+2
+    bitmap += "{0:03b}".format(0 if done else health_val)
+    return bitmap
+
 def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
     bitmap = []
     bitmap += "{0:02b}".format(army_id_turn)  # up to 4 players
@@ -35,17 +51,8 @@ def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
         bitmap += "{0:05b}".format(0 if done else tile['x'])
         bitmap += "{0:05b}".format(0 if done else tile['y'])
         bitmap += "{0:04b}".format(0 if done else TERRAIN_VALUES[tile['terrain_name']])
-        unit_type = tile.get('unit_name')
         bitmap += "{0:02b}".format(0 if done else MOVED_STATES[tile.get('moved')])
-        if bblib.is_loaded_unicorn(tile):
-            unit_type += unit['slot1_deployed_unit_name']
-            # TODO: health of loaded unit
-        bitmap += "{0:04b}".format(0 if done else UNIT_VALUES[unit_type])
-        # 1-4=army_id, 5=empty
-        bitmap += "{0:03b}".format(0 if done else int(tile.get('unit_army_id') or 4)+1)
-        if 'unit_name' in tile and 'health' not in tile: tile['health'] = "100"
-        # 1=empty, 2-7=0-100% in 20% increments
-        bitmap += "{0:03b}".format(0 if done else int(int(tile.get('health', -20))/20)+2)
+        bitmap += append_unit_type_and_health(tile, done)
         # TODO: augment with # of visible enemies?
     return bitmap
 
@@ -76,16 +83,23 @@ def encode_move(move, tiles_by_idx):
     bitmap, has_move = append_bool(bitmap, skip, bool(movemove) and not skip)
     if not movemove: movemove = {'xCoordinate':-1,'yCoordinate':-1}
     # TODO: no movement?
-    bitmap += emit_tile_loc(has_move, bblib.movedict_xyidx(movemove))
+    src_xyidx = bblib.movedict_xyidx(movemove)
+    bitmap += emit_tile_loc(has_move, src_xyidx)
     bitmap, _            = append_bool(bitmap, skip, movemove.get('unit_action') == 'join')
     bitmap, _            = append_bool(bitmap, skip, movemove.get('unit_action') == 'load')
     bitmap, _            = append_bool(bitmap, skip, movemove.get('unit_action') == 'capture')
     bitmap, has_unload   = append_bool(bitmap, skip, movemove.get('unit_action') == 'unloadSlot1')
-    bitmap += emit_tile_loc(has_unload, int(movemove.get('y_coord_action', 0))*1000 +
-                            int(movemove.get('x_coord_action', 0)))
+    action_xyidx = int(movemove.get('y_coord_action', -1))*1000 + \
+                   int(movemove.get('x_coord_action', -1))
+    bitmap += emit_tile_loc(has_unload, action_xyidx)
     bitmap, has_attack   = append_bool(bitmap, skip, 'x_coord_attack' in movemove)
-    bitmap += emit_tile_loc(has_unload, int(movemove.get('y_coord_attack', 0))*1000 +
-                            int(movemove.get('x_coord_attack', 0)))
+    attack_xyidx = int(movemove.get('y_coord_attack', -1))*1000 + \
+                   int(movemove.get('x_coord_attack', -1))
+    bitmap += emit_tile_loc(has_unload, attack_xyidx)
+    
+    # augment with type & health of attacker & defender 
+    bitmap += append_unit_type_and_health(tiles_by_idx.get(src_xyidx, {}), skip)
+    bitmap += append_unit_type_and_health(tiles_by_idx.get(attack_xyidx, {}), skip)
     return bitmap
 
 def write_board_move_state(winning_army_id_str, board_move_states):
