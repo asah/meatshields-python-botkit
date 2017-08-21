@@ -1,12 +1,15 @@
-#!/bin/sh
+#!/bin/bash
 
 platform=`uname`
-if [[ $platform == 'linux' ]]; then
+if [[ $platform == 'Linux' ]]; then
     ncores=`nproc --all`
-    vm=pypy3-v5.8.0-linux64/bin/pypy3
+    vm=./pypy3-v5.8.0-linux64/bin/pypy3
 elif [[ $platform == 'Darwin' ]]; then
     ncores=`sysctl hw.ncpu|awk '{print $2}'`
     vm=/usr/local/bin/python3
+else
+    echo "unknown platform: $platform"
+    exit 1
 fi
 
 if [ "x$1" == "x" ]; then
@@ -19,5 +22,6 @@ if [ "x$1" == "x" ]; then
     exit 0
 fi
 
-d=`date +%Y%m%d--%H%M%S`
-while [ 1 ]; do $vm sim.py >> output-$d.txt ; done
+ts=`date +%Y%m%d--%H%M%S`
+core=$1   # helps avoid filename conflicts
+while [ 1 ]; do $vm sim.py >> output-$core-$ts.txt ; sleep 2; done
