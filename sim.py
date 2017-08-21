@@ -5,7 +5,7 @@ import json, copy, sys, os, time
 import basicbot_lib as bblib, board_move_state as bms
 
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
-DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '99999999'))
+DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '350'))
 
 MASTER_TILES_BY_IDX = None
 
@@ -88,9 +88,11 @@ def main():
                 bblib.tilestr(mytile, show_unit=False) for mytile in owned])))
 
         if len(turns[army_id]) > DBG_MAX_TURNS:
-            print("army #{} resigning: turns({}) > DBG_MAX_TURNS({})".format(
-                army_id, len(turns[army_id]), DBG_MAX_TURNS))
-            resigned[army_id] = True
+            print("DBG_MAX_TURNS hit: ending game without resolution")
+            sys.exit(0)
+# asah             print("army #{} resigning: turns({}) > DBG_MAX_TURNS({})".format( asah
+# asah                 army_id, len(turns[army_id]), DBG_MAX_TURNS)) asah
+# asah             resigned[army_id] = True asah
             
         # resign if no moves in two turns
         if (len(turns[army_id]) > 1 and len(turns[army_id][-1]) == 1 and
