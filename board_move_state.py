@@ -1,10 +1,11 @@
+#!/usr/bin/env python3
 # -*- compile-command: "/usr/local/bin/python3 sim.py" -*-
 
 #---------------------------------------------------------------------------
 # encoding/decoding for machine learning
 #
 
-import datetime
+import sys, datetime
 import basicbot_lib as bblib
 
 # reserve 0 for unknown terrain & units
@@ -129,7 +130,11 @@ assert(is_move_capture(EXAMPLE_CAPTURE))
 # asah print(''.join(EXAMPLE_CAPTURE)) asah
 
 if __name__ == '__main__':
-    filename = sys.argv[1]
-    attacks = [line for line in open(filename).readlines() if is_move_attack(board_move_state)]
-    print('\n'.join(attacks))
-
+    movetype = sys.argv[1]
+    fh = sys.stdin if sys.argv[2] == '-' else open(sys.argv[2])
+    for line in fh:
+        line = line[0:-1]  # trim newline
+        if (movetype == 'capture' and is_move_capture(line)) or \
+           (movetype == 'attack' and is_move_attack(line)) or \
+           False:
+            print(line) 
