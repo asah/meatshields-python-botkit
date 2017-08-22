@@ -24,7 +24,7 @@ def append_unit_type_and_health(tile, done):
     if tile is None: tile = {}
     unit_type = tile.get('unit_name')
     if bblib.is_loaded_unicorn(tile):
-        unit_type += unit['slot1_deployed_unit_name']
+        unit_type += tile['slot1_deployed_unit_name']
         # TODO: health of loaded unit
     bitmap = "{0:04b}".format(0 if done else UNIT_VALUES[unit_type])
     # 1-4=army_id, 5=empty
