@@ -1201,9 +1201,9 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
                 tilestr(src_tile, True)))
         # note: loading does NOT set 'moved' on the unicorn
         update_tile_with_dict(dest_tile, {
-            'slot1_deployed_unit_id': dest_tile['unit_id'],
-            'slot1_deployed_unit_name': dest_tile['unit_name'],
-            'slot1_deployed_unit_health': dest_tile['health'] })
+            'slot1_deployed_unit_id': src_tile['unit_id'],
+            'slot1_deployed_unit_name': src_tile['unit_name'],
+            'slot1_deployed_unit_health': src_tile['health'] })
         if dbg: DBGPRINT('army_id={} load unicorn {} from {}'. format(
                 army_id, tilestr(dest_tile), tilestr(src_tile)))
         del_unit(src_tile)
