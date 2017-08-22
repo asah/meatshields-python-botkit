@@ -1100,6 +1100,12 @@ def movedict_xyidx(movedict):
     return int(movedict.get('y_coordinate', movedict.get('yCoordinate', -1)))*1000 + \
         int(movedict.get('x_coordinate', movedict.get('xCoordinate', -1)))
 
+def compute_damage(attacker, defender):
+    attack_weight = unit_health(attacker) / 100.0
+    base_damage = DAMAGE_TBL[attacker['unit_name']][defender['unit_name']]
+    terrain_weight = 1.0 - (TERRAIN_DEFENSE[defender['terrain_name']] / 10.0)
+    return max(1, int(base_damage * attack_weight * terrain_weight))
+
 def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
     """added to library, so it can be used for forecasting.
     note: in forecasting mode, unfogging doesn't reveal enemy troops.
@@ -1255,10 +1261,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         
         move_unit(src_tile, dest_tile)
         attacker = dest_tile
-        base_damage = DAMAGE_TBL[attacker['unit_name']][defender['unit_name']]
-        attack_weight = unit_health(attacker) / 100.0
-        terrain_weight = 1.0 - (TERRAIN_DEFENSE[defender['terrain_name']] / 10.0)
-        damage = int(base_damage * attack_weight * terrain_weight)
+        damage = compute_damage(attacker, defender)
         if dbg: DBGPRINT('army_id={} attack {} vs {} dhealth={} dmg={}'.format(
                 army_id, tilestr(attacker), tilestr(defender), defender['health'], damage))
         move['__attack'] = {'attacker':tilestr(attacker), 'attacker_health': attacker['health'],
@@ -1271,10 +1274,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
             move['__attack']['return_damage'] = ATTACK_DEFENDER_KILLED
             if dbg: DBGPRINT('=> defender killed')
         elif defender['unit_name'] in RETURNS_FIRE_UNITS:
-            rbase_damage = DAMAGE_TBL[defender['unit_name']][attacker['unit_name']]
-            rattack_weight = unit_health(defender) / 100.0
-            rterrain_weight = 1.0 - (TERRAIN_DEFENSE[attacker['terrain_name']] / 10.0)
-            rdamage = int(rbase_damage * rattack_weight * rterrain_weight)
+            rdamage = compute_damage(defender, attacker)
             move['__attack']['return_damage'] = rdamage
             if dbg: DBGPRINT('=> return dmg={} vs attacker health={}'.format(
                     rdamage, attacker['health']))
@@ -1362,12 +1362,13 @@ def score_move(army_id, tiles_by_idx, player_info, move):
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
         if 'x_coord_attack' in movemove:
-            multiplier *= 3.0
+            defender_xyidx = int(movemove['y_coord_attack'])*1000 + int(movemove['x_coord_attack'])
+            defender = tiles_by_idx[defender_xyidx]
+            damage = compute_damage(dest_tile, defender)
+            # scale bonus for more damage, which also means they do less damage to us
+            num_turns_to_kill = min(4, int(unit_health(defender) / damage))
+            multiplier *= {0:4.0, 1:2.0, 2:1.25, 3:0.5, 4:0.25}[num_turns_to_kill]
             # TODO: bonus for healing injured units
-            # TODO: bonus for killing enemy
-            # TODO: scale bonus for more damage bec it means they can do less damage to us
-            #  (ideally, scale *that* to damage this partic enemy unit can do to our known
-            #  nearby units)
         elif movemove.get('unit_action', '') == 'capture':
             multiplier *= 4.0
             # TODO: bonus for completing capture
