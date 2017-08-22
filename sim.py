@@ -58,6 +58,7 @@ def main():
     while True:
         player_info = player_info_dict[player_turn_idx+1]
         army_id = player_info['army_id']
+        print("turn #{}, army #{}:".format(len(turns[army_id])+1, army_id))
         if resigned[army_id]: continue
         bblib.initialize_player_turn(army_id, MASTER_TILES_BY_IDX, player_info, game_state)
         turns[army_id].append([])
@@ -89,10 +90,9 @@ def main():
 
         if len(turns[army_id]) > DBG_MAX_TURNS:
             print("DBG_MAX_TURNS hit: ending game without resolution")
+            # there's no winner, make everybody a loser!
+            bms.write_board_move_state(-1, BOARD_MOVE_STATES)
             sys.exit(0)
-# asah             print("army #{} resigning: turns({}) > DBG_MAX_TURNS({})".format( asah
-# asah                 army_id, len(turns[army_id]), DBG_MAX_TURNS)) asah
-# asah             resigned[army_id] = True asah
             
         # resign if no moves in two turns
         if (len(turns[army_id]) > 1 and len(turns[army_id][-1]) == 1 and
