@@ -36,13 +36,18 @@ def append_unit_type_and_health(tile, done):
     bitmap += "{0:03b}".format(0 if done else health_val)
     return bitmap
 
-def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
+def encode_board_state(army_id_turn, resigned, game_info, tiles_list, dbg=False):
+    def dbgbitmap(bitmap, msg, dbg=dbg):
+        if dbg: print('bitmap loc {:4d} contains {}'.format(len(bitmap), msg))
     bitmap = []
     bitmap += "{0:02b}".format(army_id_turn)  # up to 4 players
+    dbgbitmap(bitmap, 'army_id_turn')
     for player_info in game_info['players'].values():
         army_id = player_info['army_id']
         bitmap += "{0:01b}".format(resigned[army_id])
+        dbgbitmap(bitmap, 'resigned[army_id={}]'.format(army_id))
         bitmap += "{0:06b}".format(min(int(player_info['funds'] / 1000), 63))  # funds: up to 63,000
+        dbgbitmap(bitmap, 'funds[army_id={}]'.format(army_id))
         # TODO: augment with % fog?
         # TODO: augment with # towns/castles?
     
@@ -50,15 +55,20 @@ def encode_board_state(army_id_turn, resigned, game_info, tiles_list):
         done = (tile_idx >= len(tiles_list))
         tile = {} if done else tiles_list[tile_idx]
         bitmap += "{0:05b}".format(0 if done else tile['x'])
+        if tile_idx <= 1: dbgbitmap(bitmap, 'tile[x]={}'.format(0 if done else tile['x']))
         bitmap += "{0:05b}".format(0 if done else tile['y'])
+        if tile_idx <= 1: dbgbitmap(bitmap, 'tile[y]={}'.format(0 if done else tile['y']))
         bitmap += "{0:04b}".format(0 if done else TERRAIN_VALUES[tile['terrain_name']])
+        if tile_idx <= 1: dbgbitmap(bitmap, 'terrain={}'.format(0 if done else tile['terrain_name']))
         bitmap += "{0:02b}".format(0 if done else MOVED_STATES[tile.get('moved')])
+        if tile_idx <= 1: dbgbitmap(bitmap, 'moved')
         bitmap += append_unit_type_and_health(tile, done)
+        if tile_idx <= 1: dbgbitmap(bitmap, 'unit type and health')
         # TODO: augment with # of visible enemies?
     return bitmap
 
 NO_TILE = {'x':0, 'y':0}
-def encode_move(move, tiles_by_idx):
+def encode_move(move, tiles_by_idx, dbg=False):
     def emit_tile_loc(boolval, idx):
         tile = tiles_by_idx.get(idx, {'x':0, 'y':0}) if boolval else NO_TILE
         return "{0:05b}{0:05b}".format(tile['x'], tile['y'])
@@ -67,40 +77,59 @@ def encode_move(move, tiles_by_idx):
     def append_bool(bitmap, skip, boolval):
         bitmap += 0 if skip else emit_bool(boolval)
         return bitmap, boolval
+    def dbgbitmap(bitmap, msg, dbg=dbg):
+        if dbg: print('bitmap loc {:4d} contains {}'.format(len(bitmap), msg))
     
     data = move['data']
     bitmap, done = append_bool([], False, move.get('stop_worker_num', '') != '')
     bitmap, has_data = append_bool(bitmap, False, bool(move['data']))
+    dbgbitmap(bitmap, "move['data']")
     bitmap, end_turn = append_bool(bitmap, False, bool(data.get('end_turn', False)))
+    dbgbitmap(bitmap, "end_turn")
     bitmap, skip     = append_bool(bitmap, False, done or (not has_data))
+    dbgbitmap(bitmap, "has_data")
 
     bitmap, has_purchase = append_bool(bitmap, skip, bool(data.get('purchase', False)))
-    bitmap += '{0:01b}'.format(0 if skip else has_purchase)
+    dbgbitmap(bitmap, "has_purchase")
+    bitmap += '0'  # unused
     purchase = data['purchase'] if has_purchase else {}
     bitmap += "{0:04b}".format(UNIT_VALUES[purchase['unit_name']] if has_purchase else 0)
+    dbgbitmap(bitmap, "purchase unit_name")
     bitmap += emit_tile_loc(has_purchase, bblib.movedict_xyidx(purchase))
+    dbgbitmap(bitmap, "purchase loc")
     
     movemove = data.get('move', False)
     bitmap, has_move = append_bool(bitmap, skip, bool(movemove) and not skip)
+    dbgbitmap(bitmap, "has_move")
     if not movemove: movemove = {'xCoordinate':-1,'yCoordinate':-1}
     # TODO: no movement?
     src_xyidx = bblib.movedict_xyidx(movemove)
     bitmap += emit_tile_loc(has_move, src_xyidx)
+    dbgbitmap(bitmap, "move src_loc")
     bitmap, _            = append_bool(bitmap, skip, movemove.get('unit_action') == 'join')
+    dbgbitmap(bitmap, "is join?")
     bitmap, _            = append_bool(bitmap, skip, movemove.get('unit_action') == 'load')
+    dbgbitmap(bitmap, "is load?")
     bitmap, _            = append_bool(bitmap, skip, movemove.get('unit_action') == 'capture')
+    dbgbitmap(bitmap, "is capture?")
     bitmap, has_unload   = append_bool(bitmap, skip, movemove.get('unit_action') == 'unloadSlot1')
+    dbgbitmap(bitmap, "is unload?")
     action_xyidx = int(movemove.get('y_coord_action', -1))*1000 + \
                    int(movemove.get('x_coord_action', -1))
     bitmap += emit_tile_loc(has_unload, action_xyidx)
+    dbgbitmap(bitmap, "action loc")
     bitmap, has_attack   = append_bool(bitmap, skip, 'x_coord_attack' in movemove)
+    dbgbitmap(bitmap, "is attack?")
     attack_xyidx = int(movemove.get('y_coord_attack', -1))*1000 + \
                    int(movemove.get('x_coord_attack', -1))
     bitmap += emit_tile_loc(has_unload, attack_xyidx)
+    dbgbitmap(bitmap, "attack loc")
     
     # augment with type & health of attacker & defender 
     bitmap += append_unit_type_and_health(tiles_by_idx.get(src_xyidx, {}), skip)
+    dbgbitmap(bitmap, "attacker unit & health")
     bitmap += append_unit_type_and_health(tiles_by_idx.get(attack_xyidx, {}), skip)
+    dbgbitmap(bitmap, "defender unit & health")
     return bitmap
 
 def write_board_move_state(winning_army_id_str, board_move_states):
@@ -117,6 +146,9 @@ def write_board_move_state(winning_army_id_str, board_move_states):
     fh.close()
 
 def is_move_attack(board_move_state):
+    return board_move_state[-MOVE_LEN:][45] == "1"
+
+def extract_attack_state(board_move_state):
     return board_move_state[-MOVE_LEN:][45] == "1"
 
 def is_move_capture(board_move_state):

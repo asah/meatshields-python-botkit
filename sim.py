@@ -5,6 +5,7 @@ import json, copy, sys, os, time
 import basicbot_lib as bblib, board_move_state as bms
 
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
+DBG_BITMAP = (os.environ.get('DBG_BITMAP', '0') == '1')
 DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '350'))
 
 MASTER_TILES_BY_IDX = None
@@ -27,7 +28,7 @@ def make_move(movenum, jsondata):
     return move
 
 def main():
-    global MASTER_TILES_BY_IDX
+    global MASTER_TILES_BY_IDX, DBG_BITMAP
     if os.environ.get('DBG_RAND_SEED', '') == '':
         bblib.DBG_RAND_SEED = int(time.time())
         print("randomizing random seed: {}".format(bblib.DBG_RAND_SEED))
@@ -72,14 +73,14 @@ def main():
             turns[army_id][-1].append(move)
             res = bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True)
             bstate = bms.encode_board_state(player_turn_idx, resigned, game_info,
-                                           list(MASTER_TILES_BY_IDX.values()))
-            mstate = bms.encode_move(move, MASTER_TILES_BY_IDX)
-# asah             if bms.is_move_capture(''.join(bstate + mstate)): asah
-# asah                 print('capture found.') asah
-            BOARD_MOVE_STATES.append(bstate + mstate)
-            if not res:
+                                            list(MASTER_TILES_BY_IDX.values()), DBG_BITMAP)
+            mstate = bms.encode_move(move, MASTER_TILES_BY_IDX, DBG_BITMAP)
+            if DBG_BITMAP:
                 print("board_state={} bits: board={}, move={}".format(
                     len(bstate)+len(mstate), len(bstate), len(mstate)))
+                DBG_BITMAP = False  # shut off after first execution
+            BOARD_MOVE_STATES.append(bstate + mstate)
+            if not res:
                 break
 
         for aid in resigned.keys():
