@@ -32,6 +32,11 @@ DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
 
+DBG_RAND_SEED = int(os.environ.get('DBG_RAND_SEED', '1337'))
+
+DBG_CLIP_POSS_MOVES = int(os.environ.get('DBG_CLIP_POSS_MOVES', '50'))
+
+
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
 PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
@@ -57,10 +62,10 @@ def dbgprint(msg):
 
 DBGPRINT = dbgprint
 
-def set_random_seed(val=1337):
-    """reproducibility."""
-    random.seed(val)
-    numpy.random.seed(val)
+def set_random_seed():
+    """reproducibility.  set DBG_RAND_SEED to force, e.g. for true randomness"""
+    random.seed(DBG_RAND_SEED)
+    numpy.random.seed(DBG_RAND_SEED)
     
 def mkres(**args):
     """ e.g. mkres(move={"x_coordinates": ... }) """
@@ -644,10 +649,15 @@ def is_unloaded_unicorn(unit):
         unit.get('slot1_deployed_unit_name', '') in [None, '']
 
 def is_loaded_unicorn(unit):
-    return unit['unit_name'] == 'Unicorn' and \
+    return unit.get('unit_name') == 'Unicorn' and \
         unit.get('slot1_deployed_unit_name', '') not in [None, '']
 
 def enumerate_moves(player_id, army_id, game_info, players, moves):
+    # subtle: we enumerate the logical moves in order, so after N moves it's highly unlikely
+    # that we'll pick a less-logical move, e.g. a simple_movement when there's a possible
+    # attack or capture.
+    if len(moves) > DBG_CLIP_POSS_MOVES: return
+    
     my_info = players[player_id]
     # debug hack to force the algorithm to 'pick' this tile for the move,
     # building units at a castle, moving a unit, etc.
@@ -953,6 +963,8 @@ def select_next_move(player_id, game_info, preparsed=False):
     army_id = player_info['army_id']
     if not preparsed:
         parse_map(army_id, tiles, game_info)
+    if DEBUG:
+        save_game_json(army_id, player_id, game_id, game_info)
     tiles_list = TILES_BY_IDX.values()
     if is_first_move_in_turn(game_info['game_id']):
         DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
@@ -1040,14 +1052,6 @@ def select_next_move(player_id, game_info, preparsed=False):
         DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
     move = moves[mvkey]
 
-    # save the game, for debugging
-    if DEBUG:
-        game_info_json = compact_json_dumps(compressed_game_info(game_info, army_id))
-        game_fh = open('game-{}.json'.format(game_id), 'w')
-        game_fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
-            "{", player_id, game_info_json, "}"))
-        game_fh.close()
-
     LAST_MOVES[game_id] = move
     total_time = datetime.datetime.now() - start_time
     if DBG_TIMING:
@@ -1097,6 +1101,12 @@ UNIT_DICT_KEYS = [ 'unit_army_id', 'unit_army_name', 'unit_id', 'unit_name',  'm
 def movedict_xyidx(movedict):
     return int(movedict.get('y_coordinate', movedict.get('yCoordinate', -1)))*1000 + \
         int(movedict.get('x_coordinate', movedict.get('xCoordinate', -1)))
+
+def compute_damage(attacker, defender):
+    attack_weight = unit_health(attacker) / 100.0
+    base_damage = DAMAGE_TBL[attacker['unit_name']][defender['unit_name']]
+    terrain_weight = 1.0 - (TERRAIN_DEFENSE[defender['terrain_name']] / 10.0)
+    return max(1, int(base_damage * attack_weight * terrain_weight))
 
 def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
     """added to library, so it can be used for forecasting.
@@ -1193,9 +1203,9 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
                 tilestr(src_tile, True)))
         # note: loading does NOT set 'moved' on the unicorn
         update_tile_with_dict(dest_tile, {
-            'slot1_deployed_unit_id': dest_tile['unit_id'],
-            'slot1_deployed_unit_name': dest_tile['unit_name'],
-            'slot1_deployed_unit_health': dest_tile['health'] })
+            'slot1_deployed_unit_id': src_tile['unit_id'],
+            'slot1_deployed_unit_name': src_tile['unit_name'],
+            'slot1_deployed_unit_health': src_tile['health'] })
         if dbg: DBGPRINT('army_id={} load unicorn {} from {}'. format(
                 army_id, tilestr(dest_tile), tilestr(src_tile)))
         del_unit(src_tile)
@@ -1253,10 +1263,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         
         move_unit(src_tile, dest_tile)
         attacker = dest_tile
-        base_damage = DAMAGE_TBL[attacker['unit_name']][defender['unit_name']]
-        attack_weight = unit_health(attacker) / 100.0
-        terrain_weight = 1.0 - (TERRAIN_DEFENSE[defender['terrain_name']] / 10.0)
-        damage = int(base_damage * attack_weight * terrain_weight)
+        damage = compute_damage(attacker, defender)
         if dbg: DBGPRINT('army_id={} attack {} vs {} dhealth={} dmg={}'.format(
                 army_id, tilestr(attacker), tilestr(defender), defender['health'], damage))
         move['__attack'] = {'attacker':tilestr(attacker), 'attacker_health': attacker['health'],
@@ -1269,10 +1276,7 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
             move['__attack']['return_damage'] = ATTACK_DEFENDER_KILLED
             if dbg: DBGPRINT('=> defender killed')
         elif defender['unit_name'] in RETURNS_FIRE_UNITS:
-            rbase_damage = DAMAGE_TBL[defender['unit_name']][attacker['unit_name']]
-            rattack_weight = unit_health(defender) / 100.0
-            rterrain_weight = 1.0 - (TERRAIN_DEFENSE[attacker['terrain_name']] / 10.0)
-            rdamage = int(rbase_damage * rattack_weight * rterrain_weight)
+            rdamage = compute_damage(defender, attacker)
             move['__attack']['return_damage'] = rdamage
             if dbg: DBGPRINT('=> return dmg={} vs attacker health={}'.format(
                     rdamage, attacker['health']))
@@ -1354,20 +1358,21 @@ def score_move(army_id, tiles_by_idx, player_info, move):
     # obviously, this is (highly) suboptimal, but it plays games 10x faster to help accelerate
     # learning...
     multiplier = 1.0
-    if move['data']['move']:  # ignore false
-        movemove = move['data']['move']
+    movemove = move['data']['move']
+    if movemove:  # ignore false
         dest_xyidx = movedict_xyidx(movemove)
         dest_tile = tiles_by_idx[dest_xyidx]
         unit_max_move = float(max_travel(dest_tile))
         if 'x_coord_attack' in movemove:
-            multiplier *= 4.0
+            defender_xyidx = int(movemove['y_coord_attack'])*1000 + int(movemove['x_coord_attack'])
+            defender = tiles_by_idx[defender_xyidx]
+            damage = compute_damage(dest_tile, defender)
+            # scale bonus for more damage, which also means they do less damage to us
+            num_turns_to_kill = min(4, int(unit_health(defender) / damage))
+            multiplier *= {0:4.0, 1:2.0, 2:1.25, 3:0.5, 4:0.25}[num_turns_to_kill]
             # TODO: bonus for healing injured units
-            # TODO: bonus for killing enemy
-            # TODO: scale bonus for more damage bec it means they can do less damage to us
-            #  (ideally, scale *that* to damage this partic enemy unit can do to our known
-            #  nearby units)
         elif movemove.get('unit_action', '') == 'capture':
-            multiplier *= 2.5
+            multiplier *= 4.0
             # TODO: bonus for completing capture
             # TODO: bonus for stealing from enemy
             # bonus for attacking enemy
