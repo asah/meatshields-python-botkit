@@ -7,4 +7,8 @@ export FLASK_APP="$1"
 if [ "x$FLASK_APP" = "x" ]; then
     export FLASK_APP=basicbot.py
 fi
-python3 -m flask run --host=0.0.0.0
+if [ "x$PYBIN" = "x" ]; then
+    export PYBIN="python3"
+#    export PYBIN="./pypy3-v5.8.0-linux64/bin/pypy3 -X track-resources"
+fi
+$PYBIN -m flask run --host=0.0.0.0

@@ -949,22 +949,18 @@ def select_next_move(player_id, game_info, preparsed=False):
     if game_id not in GAMES:
         GAMES[game_id] = { 'moves': [] }
 
-    # save the request, for replay (low level debugging)
-    game_info_json = ""
-    if DEBUG:
-        game_info_json = json.dumps(game_info, indent=2, sort_keys=True)
-        lastreq_fh = open('lastreq.json', 'w')
-        lastreq_fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
-            "{", player_id, game_info_json, "}"))
-        lastreq_fh.close()
-
     tiles, players = game_info['tiles'], game_info['players']
     player_info = players[player_id]
     army_id = player_info['army_id']
     if not preparsed:
         parse_map(army_id, tiles, game_info)
+    # save the request, for replay (low level debugging)
     if DEBUG:
-        save_game_json(army_id, player_id, game_id, game_info)
+        game_info_json = json.dumps(game_info, indent=2, sort_keys=True)
+        game_fh = open('game-{}.json'.format('game_id'), 'w')
+        game_fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
+            "{", player_id, game_info_json, "}"))
+        game_fh.close()
     tiles_list = TILES_BY_IDX.values()
     if is_first_move_in_turn(game_info['game_id']):
         DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
