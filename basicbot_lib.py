@@ -34,6 +34,9 @@ DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
 
 DBG_RAND_SEED = int(os.environ.get('DBG_RAND_SEED', '1337'))
 
+DBG_CLIP_POSS_MOVES = int(os.environ.get('DBG_CLIP_POSS_MOVES', '50'))
+
+
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
 PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
@@ -650,6 +653,11 @@ def is_loaded_unicorn(unit):
         unit.get('slot1_deployed_unit_name', '') not in [None, '']
 
 def enumerate_moves(player_id, army_id, game_info, players, moves):
+    # subtle: we enumerate the logical moves in order, so after N moves it's highly unlikely
+    # that we'll pick a less-logical move, e.g. a simple_movement when there's a possible
+    # attack or capture.
+    if len(moves) > DBG_CLIP_POSS_MOVES: return
+    
     my_info = players[player_id]
     # debug hack to force the algorithm to 'pick' this tile for the move,
     # building units at a castle, moving a unit, etc.
@@ -955,6 +963,8 @@ def select_next_move(player_id, game_info, preparsed=False):
     army_id = player_info['army_id']
     if not preparsed:
         parse_map(army_id, tiles, game_info)
+    if DEBUG:
+        save_game_json(army_id, player_id, game_id, game_info)
     tiles_list = TILES_BY_IDX.values()
     if is_first_move_in_turn(game_info['game_id']):
         DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
@@ -1041,14 +1051,6 @@ def select_next_move(player_id, game_info, preparsed=False):
     if len(moves) == 1:
         DBGPRINT("board:\n" + combined_map(tiles_list, army_id))
     move = moves[mvkey]
-
-    # save the game, for debugging
-    if DEBUG:
-        game_info_json = compact_json_dumps(compressed_game_info(game_info, army_id))
-        game_fh = open('game-{}.json'.format(game_id), 'w')
-        game_fh.write('{} "botPlayerId": {}, "gameInfo": {} {}'.format(
-            "{", player_id, game_info_json, "}"))
-        game_fh.close()
 
     LAST_MOVES[game_id] = move
     total_time = datetime.datetime.now() - start_time

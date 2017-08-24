@@ -7,10 +7,12 @@ import basicbot_lib as bblib, board_move_state as bms
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_BITMAP = (os.environ.get('DBG_BITMAP', '0') == '1')
 DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '350'))
+DBG_RESIGN_THRES = float(os.environ.get('DBG_RESIGN_THRES', '0.66'))
 
 MASTER_TILES_BY_IDX = None
 
 BOARD_MOVE_STATES = []
+BOARD_MOVE_STATES_JSON = []
 
 def make_move(movenum, jsondata):
     """returns move"""
@@ -80,6 +82,14 @@ def main():
                     len(bstate)+len(mstate), len(bstate), len(mstate)))
                 DBG_BITMAP = False  # shut off after first execution
             BOARD_MOVE_STATES.append(bstate + mstate)
+            json_game_state = {
+                'turn': player_turn_idx,
+                'army_id': army_id,
+                'resigned': resigned,
+                'move': move,
+                'board': bblib.compressed_game_info(game_info, army_id) # internal deepcopy
+            }
+            BOARD_MOVE_STATES_JSON.append(json_game_state)
             if not res:
                 break
 
@@ -93,6 +103,7 @@ def main():
             print("DBG_MAX_TURNS hit: ending game without resolution")
             # there's no winner, make everybody a loser!
             bms.write_board_move_state(-1, BOARD_MOVE_STATES)
+            bms.write_board_move_state_json(-1, BOARD_MOVE_STATES_JSON)
             sys.exit(0)
             
         # resign if no moves in two turns
@@ -105,7 +116,7 @@ def main():
         position_scores[army_id] = pscore = move['__score_pos']
         other_pscores = dict([item for item in position_scores.items()
                               if item[0] != army_id])
-        if position_scores[army_id] < 0.70 * min(other_pscores.values()):
+        if position_scores[army_id] < DBG_RESIGN_THRES * min(other_pscores.values()):
             print("army #{} resigning: pos_score={} vs others={}".format(
                 army_id, pscore, other_pscores))
             resigned[army_id] = True
@@ -121,6 +132,7 @@ def main():
                         final_tile['in_fog'] = '0'
                     print(bblib.unitmap_json(tiles_list, army_id))
                     bms.write_board_move_state(army_id, BOARD_MOVE_STATES)
+                    bms.write_board_move_state_json(-1, BOARD_MOVE_STATES_JSON)
                     sys.exit(0)
 
         # advance to next player
