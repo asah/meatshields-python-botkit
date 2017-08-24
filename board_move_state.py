@@ -5,7 +5,7 @@
 # encoding/decoding for machine learning
 #
 
-import sys, datetime, re, json
+import sys, datetime, re, json, bz2
 import basicbot_lib as bblib
 
 # reserve 0 for unknown terrain & units
@@ -138,22 +138,23 @@ def encode_move(move, tiles_by_idx, dbg=False):
 
 def write_board_move_state(winning_army_id_str, board_move_states):
     winning_army_id = int(winning_army_id_str)
-    filename = 'board-{}.txt'.format(datetime.datetime.now().strftime('%Y%m%d%H%M%S%f'))
-    fh = open(filename, 'w')
+    filename = 'board-{}.txt.bz2'.format(datetime.datetime.now().strftime('%Y%m%d%H%M%S%f'))
+    fh = bz2.open(filename, 'w')
     for i, bitmap in enumerate(board_move_states):
         if i == 0:
             print('writing board state to {}: {} moves, {} bits each'.format(
                 filename, len(board_move_states), len(bitmap)))
         bitmap_str = "".join(bitmap)
         army_id = int(bitmap_str[0:2], 2)
-        fh.write("{}\t{}\n".format("1" if army_id == winning_army_id else "0", bitmap_str))
+        fh.write("{}\t{}\n".format("1" if army_id == winning_army_id else "0", bitmap_str)
+                 .encode('utf-8'))
     fh.close()
 
 def write_board_move_state_json(winning_army_id_str, board_move_states_json):
     winning_army_id = int(winning_army_id_str)
-    filename = 'board-{}.json'.format(datetime.datetime.now().strftime('%Y%m%d%H%M%S%f'))
-    fh = open(filename, 'w')
-    fh.write("[\n")
+    filename = 'board-{}.json.bz2'.format(datetime.datetime.now().strftime('%Y%m%d%H%M%S%f'))
+    fh = bz2.open(filename, 'w')
+    fh.write("[\n".encode('utf-8'))
     maxlen = 0
     for i, jsondata in enumerate(board_move_states_json):
         jsondata['move_led_to_win'] = (1 if jsondata['army_id'] == winning_army_id else 0)
@@ -161,8 +162,8 @@ def write_board_move_state_json(winning_army_id_str, board_move_states_json):
     print('writing board state to {}: {} moves, {} max bytes, {:.0f} avg bytes'.format(
         filename, len(board_move_states_json), maxlen,
         1.0*len(json.dumps(board_move_states_json))/len(board_move_states_json)))
-    json.dump(board_move_states_json, fh)
-    fh.write("]\n")
+    fh.write(json.dumps(board_move_states_json).encode('utf-8'))
+    fh.write("]\n".encode('utf-8'))
     fh.close()
 
 def is_move_attack(board_move_state):
