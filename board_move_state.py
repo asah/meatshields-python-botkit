@@ -51,7 +51,7 @@ def encode_board_state(army_id_turn, resigned, game_info, tiles_list, dbg=False)
         dbgbitmap(bitmap, 'resigned[army_id={}]'.format(army_id))
         bitmap += "{0:01b}".format(resigned[army_id])
         dbgbitmap(bitmap, 'funds[army_id={}]'.format(army_id))
-        bitmap += "{0:06b}".format(min(int(player_info['funds'] / 1000), 63))  # funds: up to 63,000
+        bitmap += "{0:06b}".format(min(int(int(player_info['funds']) / 1000), 63))  # funds: up to 63,000
         # TODO: augment with % fog?
         # TODO: augment with # towns/castles?
     
