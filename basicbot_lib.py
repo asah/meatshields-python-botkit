@@ -181,9 +181,8 @@ TILE_DEFAULT_VALUES.update({
     'health': "100", "fuel": "100", "moved": "0"
 })
 
-TILE_KNOWN_FIELDS = list(TILE_DEFAULT_VALUES.keys()) + [
-    'terrain_name', 'x_coordinate', 'y_coordinate', 'xy', 'xyidx', 'xystr'
-]
+TILE_LOC_FIELDS = ['x_coordinate', 'y_coordinate', 'xy', 'xyidx', 'xystr']
+TILE_KNOWN_FIELDS = list(TILE_DEFAULT_VALUES.keys()) + TILE_LOC_FIELDS + [ 'terrain_name' ]
 
 def ifnone(val, default):
     return default if val is None else val
@@ -599,6 +598,7 @@ def parse_map(army_id, tiles, game_info):
             else:
                 TILES_BY_IDX[tile['xyidx']] = tile
     parse_tiles_by_idx(army_id, TILES_BY_IDX)
+    return TILES_BY_IDX
 
 def dist_from_enemy_hq(tile):
     return dist(OTHER_HQ[0], tile)
@@ -643,6 +643,9 @@ def copy_move(move, update):
     new_move = copy.deepcopy(move)
     new_move.update(update)
     return new_move
+
+def copy_tile_exc_loc(tile):
+    return dict( [(key, val) for key, val in tile.items() if key not in TILE_LOC_FIELDS] )
 
 def is_unloaded_unicorn(unit):
     return unit['unit_name'] == 'Unicorn' and \

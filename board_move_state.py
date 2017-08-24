@@ -154,7 +154,6 @@ def write_board_move_state_json(winning_army_id_str, board_move_states_json):
     winning_army_id = int(winning_army_id_str)
     filename = 'board-{}.json.bz2'.format(datetime.datetime.now().strftime('%Y%m%d%H%M%S%f'))
     fh = bz2.open(filename, 'w')
-    fh.write("[\n".encode('utf-8'))
     maxlen = 0
     for i, jsondata in enumerate(board_move_states_json):
         jsondata['move_led_to_win'] = (1 if jsondata['army_id'] == winning_army_id else 0)
@@ -163,7 +162,6 @@ def write_board_move_state_json(winning_army_id_str, board_move_states_json):
         filename, len(board_move_states_json), maxlen,
         1.0*len(json.dumps(board_move_states_json))/len(board_move_states_json)))
     fh.write(json.dumps(board_move_states_json).encode('utf-8'))
-    fh.write("]\n".encode('utf-8'))
     fh.close()
 
 def is_move_attack(board_move_state):
@@ -175,10 +173,9 @@ def extract_tile_info(board_move_state, x, y):
     return board_move_state[(start_offset+10):(start_offset+36)]
 
 def restore_tile(board_move_state, x, y):
+    """WIP"""
     state = extract_tile_info(board_move_state, x, y)
-    print('state={}'.format(state))
     chk_x, chk_y = int(state[0:5], 2), int(state[5:10], 2)
-    print('ask:{},{} = found:{},{}'.format(x,y,chk_x,chk_y))
     tile = {
         'x': x, 'y': y, 'xyidx': x+y*1000,
         'terrain_name': TERRAIN_NAMES[int(state[10:14], 2)],
@@ -213,6 +210,40 @@ def extract_attack_state(board_move_state):
     bblib.DBGPRINT('damage: {}'.format(damage))
     return bitmap
 
+def is_move_attack_json(state):
+    return (state.get('move', {}) and \
+            state.get('move', {}).get('data', {}) and \
+            state.get('move', {}).get('data', {}).get('move', {}) and \
+            state.get('move', {}).get('data', {}).get('move', {}).get('x_coord_attack') is not None)
+
+def extract_attack_state_json(board_move_state, tiles_by_idx):
+    movemove = board_move_state['move']['data']['move']
+    res = {'attacker_neighbors': [], 'defender_neighbors': [], 'move': movemove}
+    attacker = defender = None
+    attacker_x, attacker_y = int(movemove['x_coordinate']), int(movemove['y_coordinate'])
+    print('attacker: {},{}'.format(attacker_x, attacker_y))
+    for dx in range(-2,3):
+        for dy in range(-2,3):
+            tile = tiles_by_idx.get(attacker_x+dx + (attacker_y+dy)*1000)
+            tile = {} if tile is None else bblib.copy_tile_exc_loc(tile)
+            if dx==0 and dy==0: attacker = tile
+            res['attacker_neighbors'].append(tile)
+            print('{}{}'.format('=> ' if dx==0 and dy==0 else '', bblib.tilestr(tile) if len(tile)>0 else ''))
+    defender_x, defender_y = int(movemove['x_coord_attack']), int(movemove['y_coord_attack'])
+    print('defender: {},{}'.format(defender_x, defender_y))
+    for dx in range(-2,3):
+        for dy in range(-2,3):
+            tile = tiles_by_idx.get(defender_x+dx + (defender_y+dy)*1000)
+            tile = {} if tile is None else bblib.copy_tile_exc_loc(tile)
+            if dx==0 and dy==0: defender = tile
+            res['defender_neighbors'].append(tile)
+            print('{}{}'.format('=> ' if dx==0 and dy==0 else '', bblib.tilestr(tile) if len(tile)>0 else ''))
+    print(attacker)
+    print(defender)
+    res['dmg20'] = 20 * int(bblib.compute_damage(attacker, defender) / 20)
+    sys.exit(0)
+    return res
+
 def is_move_capture(board_move_state):
     return board_move_state[-MOVE_LEN:][33] == "1"
 
@@ -225,7 +256,25 @@ assert(is_move_capture(EXAMPLE_CAPTURE))
 
 if __name__ == '__main__':
     movetype = sys.argv[1]
-    fh = sys.stdin if sys.argv[2] == '-' else open(sys.argv[2])
+    if sys.argv[2] == '-':
+        fh = sys.stdin
+    elif 'bz2' in sys.argv[2]:
+        fh = bz2.open(sys.argv[2], 'r')
+    else:
+        fh = open(sys.argv[2])
+    if 'json' in movetype:
+        board_game_states = json.loads(fh.read().decode())
+        # legacy
+        if len(board_game_states) == 1: board_game_states = board_game_states[0] 
+        for state in board_game_states:
+            tiles_by_idx = bblib.parse_map(state['army_id'], state['board']['tiles'],
+                                           state['board'])
+            print(bblib.combined_map(list(tiles_by_idx.values()), state['army_id']))
+            if movetype == 'attack_state_json' and is_move_attack_json(state):
+                print(extract_attack_state_json(state, tiles_by_idx))
+                continue
+        sys.exit(0)
+            
     for line in fh:
         state = line[2:-1]  # trim newline
         print(restore_tile(state, 0,0))

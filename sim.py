@@ -72,24 +72,23 @@ def main():
                 print("army_id={}  player_turn_idx={}  funds={}".format(
                     army_id, player_turn_idx+1, player_info['funds']))
             move = make_move(len(turns[army_id]), game_state)
-            turns[army_id][-1].append(move)
-            res = bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True)
             bstate = bms.encode_board_state(player_turn_idx, resigned, game_info,
                                             list(MASTER_TILES_BY_IDX.values()), DBG_BITMAP)
             mstate = bms.encode_move(move, MASTER_TILES_BY_IDX, DBG_BITMAP)
-            if DBG_BITMAP:
-                print("board_state={} bits: board={}, move={}".format(
-                    len(bstate)+len(mstate), len(bstate), len(mstate)))
-                DBG_BITMAP = False  # shut off after first execution
             BOARD_MOVE_STATES.append(bstate + mstate)
-            json_game_state = {
+            BOARD_MOVE_STATES_JSON.append({
                 'turn': player_turn_idx,
                 'army_id': army_id,
                 'resigned': resigned,
                 'move': move,
                 'board': bblib.compressed_game_info(game_info, army_id) # internal deepcopy
-            }
-            BOARD_MOVE_STATES_JSON.append(json_game_state)
+            })
+            if DBG_BITMAP:
+                print("board_state={} bits: board={}, move={}".format(
+                    len(bstate)+len(mstate), len(bstate), len(mstate)))
+                DBG_BITMAP = False  # shut off after first execution
+            turns[army_id][-1].append(move)
+            res = bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True)
             if not res:
                 break
 
