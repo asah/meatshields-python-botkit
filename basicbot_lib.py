@@ -92,26 +92,32 @@ UPPER_SHORTCODES_TERRAIN = dict([(tval,tkey) for tkey,tval in TERRAIN_SHORTCODES
 LOWER_SHORTCODES_TERRAIN = dict([(tval.lower(),tkey) for tkey,tval in TERRAIN_SHORTCODES.items()])
 
 UNIT_TYPES = {
-    'Knight':       { 'cost':  1000, 'move': 3, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Skateboard':   { 'cost':  1000, 'move': 1, 'vision': 1, 'atkmin': 0, 'atkmax': 0 },
     'Unicorn':      { 'cost':  1000, 'move': 4, 'vision': 1, 'atkmin': 0, 'atkmax': 0 },
+    'Peregrine':    { 'cost':  1500, 'move': 5, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Vampire':      { 'cost':  3000, 'move': 4, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
+    'Earthquake':   { 'cost':  1500, 'move': 3, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
     'Archer':       { 'cost':  2000, 'move': 2, 'vision': 2, 'atkmin': 2, 'atkmax': 3 },
-    'Ninja':        { 'cost':  3000, 'move': 2, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Knight':       { 'cost':  1000, 'move': 3, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Reaper':       { 'cost': 12000, 'move': 4, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
+    'Buckshot':     { 'cost':  3000, 'move': 3, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
     'Mount':        { 'cost':  4000, 'move': 8, 'vision': 5, 'atkmin': 1, 'atkmax': 1 },
-    'Boulder':      { 'cost':  6000, 'move': 5, 'vision': 1, 'atkmin': 2, 'atkmax': 3 },
-    'Mage':         { 'cost':  6000, 'move': 6, 'vision': 3, 'atkmin': 1, 'atkmax': 1 },
+    'Ninja':        { 'cost':  3000, 'move': 2, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
     'Centaur':      { 'cost':  7000, 'move': 6, 'vision': 2, 'atkmin': 1, 'atkmax': 1 },
+    'Boulder':      { 'cost':  6000, 'move': 5, 'vision': 1, 'atkmin': 2, 'atkmax': 3 },
     'Brimstone':    { 'cost': 15000, 'move': 4, 'vision': 1, 'atkmin': 3, 'atkmax': 4 },
+    'Mage':         { 'cost':  6000, 'move': 6, 'vision': 3, 'atkmin': 1, 'atkmax': 1 },
     'Troll':        { 'cost': 16000, 'move': 6, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
-    'Giant':        { 'cost': 22000, 'move': 6, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
     'Thunderstorm': { 'cost': 28000, 'move': 4, 'vision': 1, 'atkmin': 3, 'atkmax': 5 },
+    'Giant':        { 'cost': 22000, 'move': 6, 'vision': 1, 'atkmin': 1, 'atkmax': 1 },
 }
 
 UNIT_SHORTCODES = dict([(tkey, tkey[0]) for tkey in UNIT_TYPES.keys()])
-UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H', 'Mage': 'E' })
+UNIT_SHORTCODES.update({ 'Brimstone': 'R', 'Thunderstorm': 'H', 'Mage': 'E', 'Buckshot': 'O', 'Earthquake': 'Q' })
 UPPER_SHORTCODES_UNIT = dict([(tval,tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 LOWER_SHORTCODES_UNIT = dict([(tval.lower(),tkey) for tkey,tval in UNIT_SHORTCODES.items()])
 
-LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja'.split())
+LOADABLE_UNITS = CAPTURING_UNITS = set('Knight Archer Ninja Vampire Earthquake Buckshot'.split())
 ATTACKING_UNITS = set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 0])
 MISSILE_UNITS =   set([ukey for ukey,uval in UNIT_TYPES.items() if uval['atkmin'] > 1])
 RETURNS_FIRE_UNITS = ATTACKING_UNITS - MISSILE_UNITS
@@ -121,18 +127,24 @@ ATTACK_STRENGTH = {}
 DEFENSE_STRENGTH = {}
 def setup_damage_table():
     dmg_matrix = [
-        'Unicorn         1   1   1   1   1   1   1   1   1   1   1   1 ',
-        'Knight         14  55  65  12  45   5  15   5  25   1  30   1 ',
-        'Archer         40  45  55   7  20   4  15   5  35   4  45   4 ',
-        'Mount          65  80  85  55  75   6  65   4  75   1  85   1 ',
-        'Ninja          75  65  75  85  55  55  70  70  85  15  90  15 ',
-        'Centaur        75  75  80  85  70  55  70  65  85  15 100  15 ',
-        'Boulder        70  90  95  80  85  70  75  75  80  45  85  40 ',
-        'Mage          120 120 120  85 120  30  75  35  85  20  95  10 ',
-        'Brimstone      80  95 100  90  90  80  85  85  85  55  90  50 ',
-        'Troll         105 105 115 105  95  85 105 105 105  55 115  45 ',
-        'Thunderstorm  120 120 120 120 120  85 120  95 120  65 120  60 ',
-        'Giant         125 125 135 125 115 105 115 115 125  75 135  55 '
+        'Skateboard      1 100   1   1   1   1   1   1   1   1   1 100   1   1   1   1   1   1',
+        'Unicorn         1 100   1   1   1   1   1   1   1   1   1 100   1   1   1   1   1   1',
+        'Peregrine      12 100   1   3  11  12  10   1   2   1   1 100   5   5   6   1   4   1',
+        'Vampire        40 100   6  14  35  15  50  10  12   8   6 100  40  35   1   6  30   8',
+        'Earthquake     38 100  20  12  18  15  45   4   4   1  30 100  42  30  35  12  15   1',
+        'Archer         45 100  35   7  40  40  50   4   5   4  45 100  55  20  35  15  15   4',
+        'Knight         55 100  25  12  14  20  60   5   5   1  30 100  65  45  50  15  25   1',
+        'Reaper         60 100  65  45  55   1  60  35  40  12  70 100  65  55  65  50  60  12',
+        'Buckshot       90 100  30  30  90  40  90  20  20  10  40 100 100  75  80  20  55  10',
+        'Mount          80 100  75  55  65  70  80   6   4   1  85 100  85  75  75  65  80   1',
+        'Ninja          65 100  85  85  75  85  70  55  70  15  90 100  75  55  60  70  55  15',
+        'Centaur        75 100  85  85  75  85  75  55  65  15 100 100  80  70  75  70  75  15',
+        'Boulder        90 100  80  80  70  90  90  70  75  40  85 100  95  85  95  75  90  45',
+        'Brimstone      95 100  85  90  80  95  95  80  85  50  90 100 100  90 100  85  95  55',
+        'Mage          135 100  85  85 135  80 135  30  35  10  95 100 135 135 135  75 135  20',
+        'Troll         105 100 105 105 105 105 110  85 105  45 115 100 115  95 100 105 100  55',
+        'Thunderstorm  120 100 120 120 120 120 120  85  95  60 120 100 120 120 120 120 120  65',
+        'Giant         125 100 125 125 125 115 130 105 115  55 135 100 135 115 120 115 130  75',
     ]
     # first word is the unit type e.g. Unicorn - track the order these appear
     dmg_tbl_order = [re.sub(r'[: ].+', '', dmg.strip()) for dmg in dmg_matrix]
