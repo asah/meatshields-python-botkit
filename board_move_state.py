@@ -12,12 +12,13 @@ import basicbot_lib as bblib
 TERRAIN_VALUES = dict( [(val,idx+1) for idx,val in enumerate(
     sorted(bblib.TERRAIN_DEFENSE.keys()))] )
 TERRAIN_VALUES['unknown'] = 0
-UNIT_VALUES = dict( [(val,idx+4) for idx,val in enumerate(
-    sorted(bblib.UNIT_TYPES.keys()))] )
-UNIT_VALUES[None] = UNIT_VALUES[''] = 0
-UNIT_VALUES['UnicornKnight'] = 1
-UNIT_VALUES['UnicornArcher'] = 2
-UNIT_VALUES['UnicornNinja'] = 3
+UNIT_VALUES = { None: 0, '': 0 }
+for unit in sorted(bblib.UNIT_TYPES.keys()):
+    UNIT_VALUES[unit] = len(UNIT_VALUES)
+for carrier in ['Unicorn', 'Skateboard']:
+    for unit in bblib.LOADABLE_UNITS:
+        UNIT_VALUES[carrier+unit] = len(UNIT_VALUES)
+if len(UNIT_VALUES) > 32: raise Exception('more than 32 UNIT_VALUES - update the code and delete the saved games.')
 
 TERRAIN_NAMES = dict( [(val,key) for key,val in TERRAIN_VALUES.items()] )
 UNIT_NAMES = dict( [(val,key) for key,val in UNIT_VALUES.items()] )
@@ -27,7 +28,7 @@ MOVED_STATES = { None: 0, '0': 1, '1': 2 }
 def append_unit_type_and_health(tile, done):
     if tile is None: tile = {}
     unit_type = tile.get('unit_name')
-    if bblib.is_loaded_unicorn(tile):
+    if bblib.is_loaded_unicorn(tile) or  bblib.is_loaded_skateboard(tile):
         unit_type += tile['slot1_deployed_unit_name']
         # TODO: health of loaded unit
     bitmap = "{0:04b}".format(0 if done else UNIT_VALUES[unit_type])

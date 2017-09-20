@@ -27,7 +27,7 @@ DBG_MOVES = (os.environ.get('DBG_MOVES', '0') == '1')
 DBG_STATS = (os.environ.get('DBG_STATS', '1') == '1')
 DBG_SCORING = (os.environ.get('DBG_SCORING', '0') == '1')
 DBG_SCORING_DETAIL = (os.environ.get('DBG_SCORING_DETAIL', '0') == '1')
-DBG_UNICORN_LOADING = (os.environ.get('DBG_UNICORN_LOADING', '0') == '1')
+DBG_LOADING = (os.environ.get('DBG_LOADING', '0') == '1')
 DBG_PRINT_DAMAGE_TBL = (os.environ.get('DBG_PRINT_DAMAGE_TBL', '0') == '1')
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
@@ -396,7 +396,9 @@ def dist(unit, tile):
     return abs(tile['x'] - unit['x']) + abs(tile['y'] - unit['y'])
 
 def max_travel(unit):
-    return 6 if is_loaded_unicorn(unit) else unit['unit_type']['move']
+    if is_loaded_unicorn(unit): return 6
+    if is_loaded_skateboard(unit): return 8
+    return unit['unit_type']['move']
 
 def is_visible(unit, tile):
     distance = dist(unit, tile)
@@ -663,8 +665,16 @@ def is_unloaded_unicorn(unit):
     return unit['unit_name'] == 'Unicorn' and \
         unit.get('slot1_deployed_unit_name', '') in [None, '']
 
+def is_unloaded_skateboard(unit):
+    return unit['unit_name'] == 'Skateboard' and \
+        unit.get('slot1_deployed_unit_name', '') in [None, '']
+
 def is_loaded_unicorn(unit):
     return unit.get('unit_name') == 'Unicorn' and \
+        unit.get('slot1_deployed_unit_name', '') not in [None, '']
+
+def is_loaded_skateboard(unit):
+    return unit.get('unit_name') == 'Skateboard' and \
         unit.get('slot1_deployed_unit_name', '') not in [None, '']
 
 def enumerate_moves(player_id, army_id, game_info, players, moves):
@@ -679,7 +689,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     dbg_force_tile = game_info.get('dbg_force_tile', '')   # x,y padded with zeroes, e.g. 04,14
     #todo: dbg_force_action = game_info.get('dbg_force_action', '')
 
-    # unit movement, incl unicorn loading/unloading
+    # unit movement, incl loading/unloading
     dbg_nbrs = []
     for unit in my_units_by_dist():
         unit['__mvclasses'] = {}
@@ -690,9 +700,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
         if dbg_force_tile not in ['', unit['xy']]: continue
         unit_type = unit['unit_name']
 
-        # decide on unicorn unloading first -- this makes it possible to unload/reload/move/unload
-        # all in one turn
-        if is_loaded_unicorn(unit):
+        # decide on unloading first -- this makes it possible to unload/reload in one turn
+        if is_loaded_unicorn(unit) or is_loaded_skateboard(unit):
             valid_neighbors = [nbr for nbr in immed_nbrs(unit) if nbr.get('unit_name') is None and
                                nbr['terrain_name'] in WALKABLE_TERRAIN]
             for nbr in valid_neighbors:
@@ -702,32 +711,32 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                     '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                     'movements': [], 'unit_action': 'unloadSlot1' }
                 if cache_move(mkres(move=unload_move), moves):
-                    if DBG_UNICORN_LOADING:
+                    if DBG_LOADING:
                         DBGPRINT('loaded, unmoved unicorn: {} unload to {}'.format(
                             tilestr(unit), tilestr(nbr)))
                     return mkres(move=unload_move)
 
         # decide on unicorn (re)loading next -- possible unload/reload/move/unload all in one turn
-        if is_unloaded_unicorn(unit):
-            unicorn = unit
+        if is_unloaded_unicorn(unit) or is_unloaded_skateboard(unit):
+            carrier = unit
             for ldable in MY_UNITS:
                 if ldable['moved'] == '1' or ldable['unit_name'] not in LOADABLE_UNITS: continue
-                if dist(unicorn, ldable) > ldable['unit_type']['move']: continue
-                if DBG_UNICORN_LOADING:
-                    DBGPRINT('unloaded unicorn {}: checking loadable in range: {}'.format(
-                        tilestr(unit), tilestr(ldable)))
+                if dist(carrier, ldable) > ldable['unit_type']['move']: continue
+                if DBG_LOADING:
+                    DBGPRINT('unloaded {} {}: checking loadable in range: {}'.format(
+                        unit['unit_name'], tilestr(unit), tilestr(ldable)))
                 walk_dests = walkable_tiles(
                     ldable, army_id, ldable, ldable['unit_type']['move'], [])
                 for walk_dest in walk_dests:
-                    if unicorn['xy'] != walk_dest['xy']: continue
-                    if DBG_UNICORN_LOADING:
+                    if carrier['xy'] != walk_dest['xy']: continue
+                    if DBG_LOADING:
                         DBGPRINT('walkdest: {} + {}'.format(
                             pathstr(walk_dest['path']), tilestr(walk_dest)))
                     walk_dest['path'].append(walk_dest)
-                    if DBG_UNICORN_LOADING:
-                        DBGPRINT('unloaded unicorn {}: {} walk to {} via {}'.format(
-                            tilestr(unit), tilestr(ldable), tilestr(walk_dest),
-                            pathstr(walk_dest['path'])))
+                    if DBG_LOADING:
+                        DBGPRINT('unloaded {} {}: {} walk to {} via {}'.format(
+                            unit['unit_name'], tilestr(unit), tilestr(ldable),
+                            tilestr(walk_dest), pathstr(walk_dest['path'])))
                     load_move = {
                         'x_coordinate': ldable['x_coordinate'],
                         'y_coordinate': ldable['y_coordinate'],
@@ -737,9 +746,9 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                             '__walkcost': walk_cost(ldable['unit_name'], p['terrain_name']),
                             '__terrain': p['terrain_name'] } for p in walk_dest['path'] ]}
                     if cache_move(mkres(move=load_move), moves):
-                        if DBG_UNICORN_LOADING:
-                            DBGPRINT('unloaded unicorn found: {} -- loading {} via {}'.format(
-                                tilestr(unit), tilestr(ldable), pathstr(walk_dest['path'])))
+                        if DBG_LOADING:
+                            DBGPRINT('unloaded {} found: {} -- loading {} via {}'.format(
+                                unit['unit_name'], tilestr(unit), tilestr(ldable), pathstr(walk_dest['path'])))
                         return mkres(move=load_move)
 
         # moves
@@ -753,6 +762,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                      (nbr.get('unit_army_id') == army_id and
                       nbr.get('unit_name') == unit['unit_name'] and
                       not is_loaded_unicorn(nbr) and not is_loaded_unicorn(unit) and
+                      not is_loaded_skateboard(nbr) and not is_loaded_skateboard(unit) and
                       unit_health(nbr) + unit_health(unit) <= MAX_JOIN_THRESHOLD ) ]
         # not moving is a valid choice
         neighbors.append(unit)
@@ -800,8 +810,8 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                 capture_move = copy_move(move, {'unit_action': 'capture', '__action': 'capture'})
                 if cache_move(mkres(move=capture_move), moves): return mkres(move=capture_move)
 
-            # unload unicorn after move
-            if is_loaded_unicorn(unit):
+            # unload after move
+            if is_loaded_unicorn(unit) or is_loaded_skateboard(unit):
                 valid_neighbors = [nbr for nbr in immed_nbrs(dest) if
                                    nbr.get('unit_name') is None and
                                    nbr['terrain_name'] in WALKABLE_TERRAIN]
@@ -812,9 +822,9 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
                         '__unit_name': unit['slot1_deployed_unit_name'], '__unit_action': 'unload',
                         'unit_action': 'unloadSlot1' })
                     if cache_move(mkres(move=unload_move), moves):
-                        if DBG_UNICORN_LOADING:
-                            DBGPRINT('loaded, moved unicorn {} -> {}, unload to {}'.format(
-                                tilestr(unit), tilestr(dest), tilestr(nbr)))
+                        if DBG_LOADING:
+                            DBGPRINT('loaded, moved {} {} -> {}, unload to {}'.format(
+                                unit['unit_name'], tilestr(unit), tilestr(dest), tilestr(nbr)))
                         return mkres(move=unload_move)
             
             # attacks
@@ -1185,9 +1195,10 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         dest_tile = tiles_by_idx[dest_xyidx]
 
     if movemove.get('unit_action', 'simplemove') == 'unloadSlot1':
-        if not is_loaded_unicorn(src_tile):
-            return mverr("attempted to unload a tile that isn't a loaded Unicorn: {}".format(
-                tilestr(src_tile, True)))
+        if not is_loaded_unicorn(src_tile) and  not is_loaded_skateboard(src_tile):
+            return mverr("attempted to unload a tile that isn't a loaded {}: {}".format(
+                tile['unit_name'], tilestr(src_tile, True)))
+        src_unit_name = src_tile['unit_name']
         move_unit(src_tile, dest_tile)
         unload_xyidx = int(movemove['y_coord_action'])*1000 + int(movemove['x_coord_action'])
         update_tile_with_dict(tiles_by_idx[unload_xyidx], {
@@ -1199,26 +1210,27 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
             'primary_ammo': '100', 'secondary_ammo': '100', 'moved': '1'
         })
         del_loaded_unit(src_tile)
-        if dbg: DBGPRINT('army_id={} moved & unloaded unicorn {} onto {}'. format(
-                army_id, tilestr(dest_tile), tilestr(tiles_by_idx[unload_xyidx])))
+        if dbg: DBGPRINT('army_id={} moved & unloaded {} {} onto {}'. format(
+                army_id, src_unit_name, tilestr(dest_tile),
+                tilestr(tiles_by_idx[unload_xyidx])))
         return True
 
     if movemove.get('unit_action', 'simplemove') == 'load':
         if len(movemove['movements']) == 0:
             return mverr("can't load without movement: {}".format(tilestr(src_tile, True)))
-        if is_loaded_unicorn(dest_tile):
-            return mverr("can't load Unicorn that's already loaded: {}".format(
-                tilestr(dest_tile, True)))
+        if is_loaded_unicorn(dest_tile) or is_loaded_skateboard(dest_tile):
+            return mverr("can't load {} that's already loaded: {}".format(
+                dest_tile['unit_name'], tilestr(dest_tile, True)))
         if src_tile['unit_name'] not in LOADABLE_UNITS:
             return mverr("can't load this type of unit: {}".format(
                 tilestr(src_tile, True)))
-        # note: loading does NOT set 'moved' on the unicorn
+        # note: loading does NOT set 'moved' on the carrier
         update_tile_with_dict(dest_tile, {
             'slot1_deployed_unit_id': src_tile['unit_id'],
             'slot1_deployed_unit_name': src_tile['unit_name'],
             'slot1_deployed_unit_health': src_tile['health'] })
-        if dbg: DBGPRINT('army_id={} load unicorn {} from {}'. format(
-                army_id, tilestr(dest_tile), tilestr(src_tile)))
+        if dbg: DBGPRINT('army_id={} load {} {} from {}'. format(
+                army_id, dest_tile['unit_name'], tilestr(dest_tile), tilestr(src_tile)))
         del_unit(src_tile)
         return True
 
@@ -1226,12 +1238,12 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
         if src_tile['unit_name'] != dest_tile['unit_name']:
             return mverr("attempted to join incompatible types: {} ==> {}".format(
                 tilestr(src_tile), tilestr(dest_tile)))
-        if is_loaded_unicorn(src_tile):
+        if is_loaded_unicorn(src_tile) or  is_loaded_skateboard(src_tile):
             return mverr("attempted to join a Unicorn that's already loaded: {}".format(
-                tilestr(src_tile, True)))
-        if is_loaded_unicorn(dest_tile):
+                src_tile['unit_name'], tilestr(src_tile, True)))
+        if is_loaded_unicorn(dest_tile) or  is_loaded_skateboard(dest_tile):
             return mverr("attempted to join to Unicorn that's already loaded: {}".format(
-                tilestr(dest_tile, True)))
+                dest_tile['unit_name'], tilestr(dest_tile, True)))
         dest_tile['health'] = min(unit_health(dest_tile) + unit_health(src_tile), 100)
         del_unit(src_tile)
         return True
