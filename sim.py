@@ -30,7 +30,7 @@ def make_move(movenum, jsondata):
     return move
 
 def main():
-    global MASTER_TILES_BY_IDX, DBG_BITMAP
+    global MASTER_TILES_BY_IDX
     if os.environ.get('DBG_RAND_SEED', '') == '':
         bblib.DBG_RAND_SEED = int(time.time())
         print("randomizing random seed: {}".format(bblib.DBG_RAND_SEED))
@@ -56,6 +56,9 @@ def main():
         position_scores[army_id] = 0
     player_turn_idx = 0
     movenum = 0
+    dbg_bitmaploc = None
+    dbg_bitmap_printed = False
+    num_state_bits = 0
 
     # main loop - take turn for each player
     while True:
@@ -65,6 +68,8 @@ def main():
         if resigned[army_id]: continue
         bblib.initialize_player_turn(army_id, MASTER_TILES_BY_IDX, player_info, game_state)
         turns[army_id].append([])
+        if DBG_BITMAP and not dbg_bitmap_printed and len(turns[army_id]) == 2:
+            dbg_bitmaploc = 0
 
         # take turn, which is multiple moves
         while True:
@@ -73,20 +78,35 @@ def main():
                     army_id, player_turn_idx+1, player_info['funds']))
             move = make_move(len(turns[army_id]), game_state)
             bstate = bms.encode_board_state(player_turn_idx, resigned, game_info,
-                                            list(MASTER_TILES_BY_IDX.values()), DBG_BITMAP)
-            mstate = bms.encode_move(move, MASTER_TILES_BY_IDX, DBG_BITMAP)
+                                            list(MASTER_TILES_BY_IDX.values()), dbg_bitmaploc)
+            if bstate is None:
+                print("DBG_MAX_UNITS hit: ending game without resolution -- all players are losers")
+                bms.write_board_move_state(-1, BOARD_MOVE_STATES)
+                bms.write_board_move_state_json(-1, BOARD_MOVE_STATES_JSON)
+                sys.exit(0)
+            if dbg_bitmaploc is not None:
+                dbg_bitmaploc = len(bstate)
+            mstate = bms.encode_move(move, MASTER_TILES_BY_IDX, dbg_bitmaploc)
+            if num_state_bits == 0:
+                num_state_bits = len(bstate)+len(mstate)
+            elif num_state_bits != len(bstate)+len(mstate):
+                print("*** ERROR: number of state bits changed?!?!?!? - not saving game")
+                sys.exit(0)
             BOARD_MOVE_STATES.append(bstate + mstate)
-            BOARD_MOVE_STATES_JSON.append({
+            if is_move_attack(move):
+                BOARD_ATTACKS.append(bms.encode_attack(move, MASTER_TILES_BY_IDX))
+            if False: BOARD_MOVE_STATES_JSON.append({
                 'turn': player_turn_idx,
                 'army_id': army_id,
                 'resigned': resigned,
                 'move': move,
                 'board': bblib.compressed_game_info(game_info, army_id) # internal deepcopy
             })
-            if DBG_BITMAP:
+            if dbg_bitmaploc is not None:
                 print("board_state={} bits: board={}, move={}".format(
                     len(bstate)+len(mstate), len(bstate), len(mstate)))
-                DBG_BITMAP = False  # shut off after first execution
+                dbg_bitmap_printed = True
+                dbg_bitmaploc = None  # disable after first execution
             turns[army_id][-1].append(move)
             res = bblib.apply_move(army_id, MASTER_TILES_BY_IDX, player_info, move, dbg=True)
             if not res:
@@ -99,8 +119,7 @@ def main():
                 bblib.tilestr(mytile, show_unit=False) for mytile in owned])))
 
         if len(turns[army_id]) > DBG_MAX_TURNS:
-            print("DBG_MAX_TURNS hit: ending game without resolution")
-            # there's no winner, make everybody a loser!
+            print("DBG_MAX_TURNS hit: ending game without resolution -- all players are losers")
             bms.write_board_move_state(-1, BOARD_MOVE_STATES)
             bms.write_board_move_state_json(-1, BOARD_MOVE_STATES_JSON)
             sys.exit(0)

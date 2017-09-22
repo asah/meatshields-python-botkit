@@ -320,6 +320,10 @@ def has_unit(tile):
 def is_my_building(tile, army_id):
     return tile.get('building_army_id', '') == army_id
 
+def bldg_army_id(tile):
+    owner = tile.get('building_army_id', 0)
+    return 0 if owner is None else int(owner)
+
 def can_capture(unit, tile, army_id):
     return (tile['terrain_name'] in CAPTURABLE_TERRAIN and unit['unit_name'] in CAPTURING_UNITS and
             not is_my_building(tile, army_id))
