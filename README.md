@@ -46,8 +46,10 @@ OK
 ```
 
 # Running the server simulator
-This causes basicbot.py to play against itself.
+This causes basicbot.py to play against itself. 
 
 ```shell
 ./sim.py
 ```
+
+Note that pypy3 *is* supported and greatly speeds up simulation. To run, use `pypy3 sim.py`. On Mac, you can `brew install pypy3`. For silly reasons, numpy is used, so also run `pypy3 -m pip install numpy`.
