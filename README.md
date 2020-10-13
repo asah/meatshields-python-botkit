@@ -46,7 +46,7 @@ OK
 ```
 
 # Running the server simulator
-This causes basicbot.py to play against itself.
+This causes basicbot.py to play against itself. 
 
 ```shell
 ./sim.py
