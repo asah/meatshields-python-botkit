@@ -51,3 +51,13 @@ This causes basicbot.py to play against itself.
 ```shell
 ./sim.py
 ```
+
+# Docker
+
+```
+docker build . -t meatshields-python-botkit:1.0
+docker run -it -d --name ms-01 meatshields-python-botkit:1.0
+docker exec -it ms-01 bash
+cd ms
+pypy sim.py
+```

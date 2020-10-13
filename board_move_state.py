@@ -52,7 +52,7 @@ def append_unit_info(tile, done):
 def emit_tile_loc(tile):
     return "{0:05b}{0:05b}".format(tile['x'], tile['y'])
 
-def emit_tile_terrain(tile):
+def emit_tile_terrain(tile, done):
     return "{0:05b}".format(0 if done else TERRAIN_VALUES[
             tile['terrain_name']+str(bblib.bldg_army_id(tile)) if
             tile['terrain_name'] in bblib.CAPTURABLE_TERRAIN else tile['terrain_name']])
@@ -79,7 +79,7 @@ def encode_board_state(army_id_turn, resigned, game_info, tiles_list, dbgloc=Non
         tile = {} if done else tiles_list[tile_idx]
         # note: don't write x/y coordinates
         if tile_idx <= 1: dbgbitmap(bitmap, 'terrain={}'.format(0 if done else tile['terrain_name']))
-        bitmap += emit_tile_terrain(tile)
+        bitmap += emit_tile_terrain(tile, done)
         if bblib.has_unit(tile):
             bitmap_unit = "{0:02b}".format(0 if done else MOVED_STATES[tile.get('moved')])
             bitmap_unit += append_unit_info(tile, done)
@@ -186,7 +186,8 @@ def write_board_move_state_json(winning_army_id_str, board_move_states_json):
         maxlen = max(maxlen, len(json.dumps(jsondata)))
     print('writing board state to {}: {} moves, {} max bytes, {:.0f} avg bytes'.format(
         filename, len(board_move_states_json), maxlen,
-        1.0*len(json.dumps(board_move_states_json))/len(board_move_states_json)))
+        1.0*len(json.dumps(board_move_states_json))/len(board_move_states_json) if
+        len(board_move_states_json) > 0 else 0))
     fh.write(json.dumps(board_move_states_json).encode('utf-8'))
     fh.close()
 

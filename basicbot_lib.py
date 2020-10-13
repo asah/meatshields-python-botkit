@@ -65,7 +65,6 @@ DBGPRINT = dbgprint
 def set_random_seed():
     """reproducibility.  set DBG_RAND_SEED to force, e.g. for true randomness"""
     random.seed(DBG_RAND_SEED)
-    numpy.random.seed(DBG_RAND_SEED)
     
 def mkres(**args):
     """ e.g. mkres(move={"x_coordinates": ... }) """
@@ -911,7 +910,7 @@ def enumerate_all_moves(player_id, army_id, game_info, players, compute_score=Tr
     moves_list = list(moves.values()) + [ {'stop_worker_num': worker_num} ]
     for i, move in enumerate(moves_list):
         if compute_score and move.get('stop_worker_num', '') == '':
-            move['__score'], move['__score_details'] = score_move(
+            move['__score'], move['__score_pos'], move['__score_details'] = score_move(
                 army_id, TILES_BY_IDX, players[player_id], move)
         move_json = json.dumps(move)
         while True:

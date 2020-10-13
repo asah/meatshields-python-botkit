@@ -9,6 +9,8 @@ DBG_BITMAP = (os.environ.get('DBG_BITMAP', '0') == '1')
 DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '350'))
 DBG_RESIGN_THRES = float(os.environ.get('DBG_RESIGN_THRES', '0.66'))
 
+BOARD_FILENAME = os.environ.get('BOARD_FILENAME', 'test_blank_board.json')
+
 MASTER_TILES_BY_IDX = None
 
 BOARD_MOVE_STATES = []
@@ -35,7 +37,7 @@ def main():
         bblib.DBG_RAND_SEED = int(time.time())
         print("randomizing random seed: {}".format(bblib.DBG_RAND_SEED))
     bblib.set_random_seed()
-    game_state = json.loads(open('test_blank_board.json').read())
+    game_state = json.loads(open(BOARD_FILENAME).read())
     game_info = game_state['gameInfo']
     bblib.parse_map(1, game_info['tiles'], game_info)
     MASTER_TILES_BY_IDX = copy.deepcopy(bblib.TILES_BY_IDX)
@@ -93,9 +95,9 @@ def main():
                 print("*** ERROR: number of state bits changed?!?!?!? - not saving game")
                 sys.exit(0)
             BOARD_MOVE_STATES.append(bstate + mstate)
-            if is_move_attack(move):
-                BOARD_ATTACKS.append(bms.encode_attack(move, MASTER_TILES_BY_IDX))
-            if False: BOARD_MOVE_STATES_JSON.append({
+            #if bms.is_move_attack(move):
+            #    BOARD_ATTACKS.append(bms.encode_attack(move, MASTER_TILES_BY_IDX))
+            if True: BOARD_MOVE_STATES_JSON.append({
                 'turn': player_turn_idx,
                 'army_id': army_id,
                 'resigned': resigned,
