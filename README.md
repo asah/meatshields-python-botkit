@@ -61,15 +61,14 @@ docker exec -it ms-01 bash -c "cd ms; pypy sim.py"
 docker kill ms-01; docker rm ms-01
 ```
 
-or get fancy:
+or get fancy and use multiple cores:
 ```
 docker exec -it ms-01 bash -c "cd ms; DBG_PARALLEL_MOVE_DISCOVERY=1 PARALLEL_MOVE_DISCOVERY=1 BOARD_FILENAME=test_attacking.json pypy sim.py"
 ```
 
 rapid development:
 ```
-tar czf - *.py *.json | docker exec -i ms-01 bash -c "cd ms; tar xzvf -"
-# ... then run the docker commands above to rebuild, re-run and restart
+tar czf - *.py *.json | docker exec -i ms-01 bash -c "cd ms; tar xzvf -"; docker exec -it ms-01 bash -c "cd ms; pypy sim.py"
 ```
 
 

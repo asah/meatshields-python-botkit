@@ -64,6 +64,7 @@ DBGPRINT = dbgprint
 def set_random_seed():
     """reproducibility.  set DBG_RAND_SEED to force, e.g. for true randomness"""
     random.seed(DBG_RAND_SEED)
+    numpy.random.seed(DBG_RAND_SEED)
     
 def mkres(**args):
     """ e.g. mkres(move={"x_coordinates": ... }) """
@@ -890,6 +891,14 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     if cache_move(mkres(end_turn=True), moves): return mkres(end_turn=True)
     return None
 
+def enumerate_all_moves_trapped(player_id, army_id, game_info, players, compute_score=True,
+                        result_queue=None, worker_num=None):
+    try:
+        return enumerate_all_moves(player_id, army_id, game_info, players, compute_score,
+                            result_queue, worker_num)
+    except KeyboardInterrupt:
+        pass # swallow KIs
+
 def enumerate_all_moves(player_id, army_id, game_info, players, compute_score=True,
                         result_queue=None, worker_num=None):
     #DBGPRINT("enumerate_all_moves({}, {}, {}, {}, {})\n\nTILES_BY_IDX: {}".format(
@@ -1001,7 +1010,7 @@ def select_next_move(player_id, game_info, preparsed=False):
             if DBG_PARALLEL_MOVE_DISCOVERY:
                 DBGPRINT("opening subprocess for unit: {}".format(tilestr(unit)))
             game_info['dbg_force_tile'] = unit['xy']
-            worker = Process(target=enumerate_all_moves, args=(
+            worker = Process(target=enumerate_all_moves_trapped, args=(
                 player_id, army_id, game_info, players, True, result_queue, len(workers), ))
             workers.append(worker)
             worker.start()
@@ -1033,7 +1042,7 @@ def select_next_move(player_id, game_info, preparsed=False):
             if not any(workers):
                 break
     else:
-        moves = enumerate_all_moves(player_id, army_id, game_info, players)
+        moves = enumerate_all_moves_trapped(player_id, army_id, game_info, players)
 
     sum_scores = 0.0
     min_score = 999999999
