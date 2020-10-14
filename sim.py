@@ -6,8 +6,8 @@ import basicbot_lib as bblib, board_move_state as bms
 
 DBG_GAME_STATE = (os.environ.get('DBG_GAME_STATE', '0') == '1')
 DBG_BITMAP = (os.environ.get('DBG_BITMAP', '0') == '1')
-DBG_MAX_TURNS = int(os.environ.get('DBG_MAX_TURNS', '350'))
-DBG_RESIGN_THRES = float(os.environ.get('DBG_RESIGN_THRES', '0.66'))
+MAX_TURNS = int(os.environ.get('MAX_TURNS', '350'))
+RESIGN_THRES = float(os.environ.get('RESIGN_THRES', '0.66'))
 
 BOARD_FILENAME = os.environ.get('BOARD_FILENAME', 'test_blank_board.json')
 
@@ -120,8 +120,8 @@ def main():
             print('army_id={} owns {} bldgs: {}'.format(aid, len(owned), " ".join([
                 bblib.tilestr(mytile, show_unit=False) for mytile in owned])))
 
-        if len(turns[army_id]) > DBG_MAX_TURNS:
-            print("DBG_MAX_TURNS hit: ending game without resolution -- all players are losers")
+        if len(turns[army_id]) > MAX_TURNS:
+            print("MAX_TURNS hit: ending game without resolution -- all players are losers")
             bms.write_board_move_state(-1, BOARD_MOVE_STATES)
             bms.write_board_move_state_json(-1, BOARD_MOVE_STATES_JSON)
             sys.exit(0)
@@ -136,7 +136,7 @@ def main():
         position_scores[army_id] = pscore = move['__score_pos']
         other_pscores = dict([item for item in position_scores.items()
                               if item[0] != army_id])
-        if position_scores[army_id] < DBG_RESIGN_THRES * min(other_pscores.values()):
+        if position_scores[army_id] < RESIGN_THRES * min(other_pscores.values()):
             print("army #{} resigning: pos_score={} vs others={}".format(
                 army_id, pscore, other_pscores))
             resigned[army_id] = True

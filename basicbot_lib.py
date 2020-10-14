@@ -34,16 +34,21 @@ DBG_ATTACK = (os.environ.get('DBG_ATTACK', '0') == '1')
 
 DBG_RAND_SEED = int(os.environ.get('DBG_RAND_SEED', '1337'))
 
-DBG_CLIP_POSS_MOVES = int(os.environ.get('DBG_CLIP_POSS_MOVES', '50'))
+CLIP_POSS_MOVES = int(os.environ.get('CLIP_POSS_MOVES', '50'))
 
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
 PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
-if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
+assert PRUNE_TOP_N_MOVES >= 0
 
 # max combined health before we no longer consider joining two units
 # set to relatively high, so AI can uncover clever strategies
-MAX_JOIN_THRESHOLD = int(os.environ.get('DBG_STATS', '150'))
+MAX_JOIN_THRESHOLD = int(os.environ.get('MAX_JOIN_THRESHOLD', '150'))
+assert MAX_JOIN_THRESHOLD >= 0  # zero = never join
+assert MAX_JOIN_THRESHOLD <= 200 # 200 = always consider joining
 
+# kinda bogus for now - instead just run multiple instances of the simulator
+# (leaving this code in because it's simple and might make a difference once
+# the bots are smart enough)
 PARALLEL_MOVE_DISCOVERY = (os.environ.get('PARALLEL_MOVE_DISCOVERY', '0') == '1')
 DBG_PARALLEL_MOVE_DISCOVERY = (os.environ.get('DBG_PARALLEL_MOVE_DISCOVERY', '0') == '1')
 
@@ -123,33 +128,32 @@ RETURNS_FIRE_UNITS = ATTACKING_UNITS - MISSILE_UNITS
 
 DAMAGE_TBL = {}
 ATTACK_STRENGTH = {}
-DEFENSE_STRENGTH = {}
 def setup_damage_table():
     dmg_matrix = [
-        'Skateboard      1 100   1   1   1   1   1   1   1   1   1 100   1   1   1   1   1   1',
-        'Unicorn         1 100   1   1   1   1   1   1   1   1   1 100   1   1   1   1   1   1',
-        'Peregrine      12 100   1   3  11  12  10   1   2   1   1 100   5   5   6   1   4   1',
-        'Vampire        40 100   6  14  35  15  50  10  12   8   6 100  40  35   1   6  30   8',
-        'Earthquake     38 100  20  12  18  15  45   4   4   1  30 100  42  30  35  12  15   1',
-        'Archer         45 100  35   7  40  40  50   4   5   4  45 100  55  20  35  15  15   4',
-        'Knight         55 100  25  12  14  20  60   5   5   1  30 100  65  45  50  15  25   1',
-        'Reaper         60 100  65  45  55   1  60  35  40  12  70 100  65  55  65  50  60  12',
-        'Buckshot       90 100  30  30  90  40  90  20  20  10  40 100 100  75  80  20  55  10',
-        'Mount          80 100  75  55  65  70  80   6   4   1  85 100  85  75  75  65  80   1',
-        'Ninja          65 100  85  85  75  85  70  55  70  15  90 100  75  55  60  70  55  15',
-        'Centaur        75 100  85  85  75  85  75  55  65  15 100 100  80  70  75  70  75  15',
-        'Boulder        90 100  80  80  70  90  90  70  75  40  85 100  95  85  95  75  90  45',
-        'Brimstone      95 100  85  90  80  95  95  80  85  50  90 100 100  90 100  85  95  55',
-        'Mage          135 100  85  85 135  80 135  30  35  10  95 100 135 135 135  75 135  20',
-        'Troll         105 100 105 105 105 105 110  85 105  45 115 100 115  95 100 105 100  55',
-        'Thunderstorm  120 100 120 120 120 120 120  85  95  60 120 100 120 120 120 120 120  65',
-        'Giant         125 100 125 125 125 115 130 105 115  55 135 100 135 115 120 115 130  75',
+        'Knight        55 100 100  60  45  25  70  65  12  14  15   5   5  20  25   1   1  30',
+        'Skateboard     0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0',
+        'Peregrine     12 100 100  10   5   4  12   5   3  11   1   1   2  12   1   1   1   1',
+        'Earthquake    38 100 100  45  30  15  48  42  12  18  12   4   4  15  20   1   1  30',
+        'Ninja         65 100 100  70  55  55  85  75  85  75  70  55  70  85  85  15  15  90',
+        'Buckshot     100 100 100 100  75  70 135 135  30 100  20  20  20  40  30  10  10  40',
+        'Vampire       50 100 100  60  45  45   1  65  35  55   6  10  12  15   6   8   8   6',
+        'Archer        45 100 100  50  20  15  60  55   7  40  15   4   5  40  35   4   4  45',
+        'Mount         80 100 100  80  75  80  90  85  55  65  65   6   4  70  75   1   1  85',
+        'Unicorn        0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0',
+        'Boulder       90 100 100  90  85  90 100  95  80  70  75  70  75  90  80  45  40  85',
+        'Centaur       75 100 100  75  70  75  85  80  85  75  70  55  65  85   85 15  15 100',
+        'Mage         170 100 100 170 170 170 175 170  80 170  68  25  35  75  80  20  10  90',
+        'Reaper        60 100 100  60  55  60  70  65  45  55  50  35  40   1  65  12  12  70',
+        'Brimstone     95 100 100  95  90  95 110 100  90  80  85  80  85  95  85  55  50  90',
+        'Troll        105 100 100 110  95 100 125 115 105 105 105  85 105 105 105  55  45 115',
+        'Giant        125 100 100 130 115 130 140 135 125 125 115 105 115 115 125  75  55 135',
+        'Thunderstorm 120 100 100 120 120 120 135 120 120 120 120  85  95 120 120  65  60 120'
     ]
     # first word is the unit type e.g. Unicorn - track the order these appear
-    dmg_tbl_order = [re.sub(r'[: ].+', '', dmg.strip()) for dmg in dmg_matrix]
+    dmg_tbl_order = [re.sub(r'[ ].+', '', dmg.strip()) for dmg in dmg_matrix]
     num_types = len(dmg_tbl_order)
     for dmg_ar_str in dmg_matrix:
-        dmg_ar = re.split(r' +', dmg_ar_str.strip().replace(':', ''))
+        dmg_ar = re.split(r' +', dmg_ar_str.strip())
         attacker = dmg_ar[0]
         DAMAGE_TBL[attacker] = {} # unit type
         for idx in range(len(dmg_ar)-1):
@@ -157,12 +161,9 @@ def setup_damage_table():
             DAMAGE_TBL[attacker][defender] = int(dmg_ar[idx+1])
             amt = int(dmg_ar[idx+1])
             ATTACK_STRENGTH[attacker] = ATTACK_STRENGTH.get(attacker, 0) + amt / num_types
-            DEFENSE_STRENGTH[defender] = DEFENSE_STRENGTH.get(defender, 0) - amt / num_types
     min_attack = min(ATTACK_STRENGTH.values())
-    min_defense = min(DEFENSE_STRENGTH.values())
     for unit in DAMAGE_TBL.keys():
         ATTACK_STRENGTH[unit] -= min_attack   # do allow 0: unicorns don't attack
-        DEFENSE_STRENGTH[unit] -= min_defense - 10.0  # don't allow 0.0
     if DBG_PRINT_DAMAGE_TBL:
         new_sort = sorted(DAMAGE_TBL.keys(), key=lambda k: ATTACK_STRENGTH[k])
         new_tbl = []
@@ -171,8 +172,8 @@ def setup_damage_table():
             for defender in new_sort:
                 res += ' {:3d}'.format(DAMAGE_TBL[attacker][defender])
             new_tbl.append(res)
-        DBGPRINT("DAMAGE_TBL: {}\n{}\nATTACK_STRENGTH:{}\nDEFENSE_STRENGTH:{}\n".format(
-            DAMAGE_TBL, "\n".join(new_tbl), ATTACK_STRENGTH, DEFENSE_STRENGTH))
+        DBGPRINT("DAMAGE_TBL: {}\n{}\nATTACK_STRENGTH:{}\n".format(
+            DAMAGE_TBL, "\n".join(new_tbl), ATTACK_STRENGTH))
 
 setup_damage_table()
 
@@ -684,7 +685,7 @@ def enumerate_moves(player_id, army_id, game_info, players, moves):
     # subtle: we enumerate the logical moves in order, so after N moves it's highly unlikely
     # that we'll pick a less-logical move, e.g. a simple_movement when there's a possible
     # attack or capture.
-    if len(moves) > DBG_CLIP_POSS_MOVES: return
+    if len(moves) > CLIP_POSS_MOVES: return
     
     my_info = players[player_id]
     # debug hack to force the algorithm to 'pick' this tile for the move,
@@ -1334,10 +1335,6 @@ def apply_move(army_id, tiles_by_idx, player_info, move, dbg=False):
 def attack_strength(unit):
     return ATTACK_STRENGTH[unit['unit_name']] * unit_health(unit) / 100.0
 
-def defense_strength(unit):
-    return DEFENSE_STRENGTH[unit['unit_name']] * unit_health(unit) / 100.0 * \
-        (1.0 - (TERRAIN_DEFENSE[unit['terrain_name']] / 10.0))
-
 def score_position(army_id, tiles_by_idx, move=None):
     # TODO: capture in progress and units that can't finish capture bec of attacks
     # TODO: Enemy has less visibility -- also accounts for pushing back
@@ -1358,15 +1355,15 @@ def score_position(army_id, tiles_by_idx, move=None):
     # scale to assuming 10 units before overwhelming other factors
     sum_attack_strength = int(sum([attack_strength(unit)*unit_health(unit)/1000.0
                                    for unit in MY_UNITS]))
-    sum_defense_strength = int(sum([defense_strength(unit)*unit_health(unit)/1000.0
+    sum_unit_health = int(sum([unit_health(unit)/100.0
                                     for unit in MY_UNITS]))
     # square the score to skew move choice to better moves...
     score = num_my_units * 10 + production_capacity * 10 + pct_visible + \
-            sum_attack_strength + sum_defense_strength + dist_from_my_castles * 40.0
+            sum_attack_strength + sum_unit_health + dist_from_my_castles * 40.0
     msg = ("{} = #unit*10({}) + prod*10({}) + %vis({:.0f}) + atk({}) + "+
            "def({}) + dist*40({:.0f}): {}").format(
                score, num_my_units*10, production_capacity*10, pct_visible,
-               sum_attack_strength, sum_defense_strength, dist_from_my_castles*40,
+               sum_attack_strength, sum_unit_health, dist_from_my_castles*40,
                movestr(move) if move else "") if DBG_SCORING else ""
     return score, msg
 
