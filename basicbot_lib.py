@@ -36,7 +36,6 @@ DBG_RAND_SEED = int(os.environ.get('DBG_RAND_SEED', '1337'))
 
 DBG_CLIP_POSS_MOVES = int(os.environ.get('DBG_CLIP_POSS_MOVES', '50'))
 
-
 # pick from the top N moves - avoids herd of mediocre moves - 0 to pick all
 PRUNE_TOP_N_MOVES = int(os.environ.get('PRUNE_TOP_N_MOVES', '6'))
 if PRUNE_TOP_N_MOVES <= 0: PRUNE_TOP_N_MOVES = 99999
@@ -1344,7 +1343,8 @@ def score_position(army_id, tiles_by_idx, move=None):
     for unit in MY_UNITS:
         for castle in MY_CASTLES:
             dist_from_my_castles += dist(unit, castle)
-    dist_from_my_castles /= float(len(MY_UNITS))
+    if len(MY_UNITS) > 0:
+        dist_from_my_castles /= float(len(MY_UNITS))
     num_my_units = len(MY_UNITS)
     # scale to assuming 10 units before overwhelming other factors
     sum_attack_strength = int(sum([attack_strength(unit)*unit_health(unit)/1000.0
